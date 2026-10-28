@@ -63,13 +63,13 @@ devops-ai-kit/
 ├── claude/                                # nội dung được cài vào ~/.claude/
 │   ├── rules/devops-kit/                  # 00-core + 7 rule theo công nghệ
 │   ├── lang/                              # en.md, vi.md → cài thành 01-language.md theo --lang
-│   ├── skills/                            # 13 skill
+│   ├── skills/                            # 14 skill
 │   ├── agents/                            # 5 subagent
 │   ├── hooks/devops-kit/                  # infra-context-guard.py
 │   └── settings.devops-kit.json           # permission + hook (được merge, không ghi đè)
 ├── scripts/                               # kit.py (bộ cài), run-kit.sh, validate.py
 ├── setup/k8s/                             # RBAC read-only + script tạo kubeconfig cho AI
-├── templates/                             # CLAUDE.md mẫu cho project, .gitignore bổ sung
+├── templates/                             # CLAUDE.md mẫu cho project, PROGRESS.md, .gitignore bổ sung
 ├── tests/                                 # test cho hook và bộ cài
 └── docs/
     ├── en/                                # guide.md, glossary.md, cloud-readonly.md (bản chuẩn)
@@ -277,6 +277,7 @@ Xem [cloud-readonly.md](cloud-readonly.md). Tóm tắt:
 ```bash
 cd ~/projects/project-A
 cp ~/devops-ai-kit/templates/project-CLAUDE.md ./CLAUDE.md        # rồi điền
+cp ~/devops-ai-kit/templates/PROGRESS.md ./PROGRESS.md            # Claude tự cập nhật
 cat ~/devops-ai-kit/templates/gitignore-additions.txt >> .gitignore
 ```
 
@@ -362,6 +363,35 @@ Mọi tài liệu đánh dấu ✅ (đã kiểm chứng bằng lệnh) · 📖 (
 2. Nhờ viết concept note từ kết quả đó, kèm ví dụ trên chính cluster của bạn.
 3. Trong lúc làm, nếu bản Claude Code của bạn có tính năng output style, bật kiểu giải thích (`/output-style`, chọn Explanatory) để Claude chèn thêm giải thích "vì sao" trong lúc làm. Tắt khi không cần, cho đỡ dài.
 4. Mục "Self-check questions" cuối concept note: dùng để tự kiểm tra, hoặc cho người mới làm khi onboarding.
+
+### 5.5. Khi Claude thiếu ngữ cảnh: `/grill-me`
+
+Dùng khi yêu cầu của bạn còn mơ hồ, hoặc bạn thấy Claude đang đoán. Claude cũng tự gọi skill này khi thiếu thông tin quan trọng.
+
+```
+/grill-me chuyển monitoring stack sang cluster mới
+```
+
+- Claude tự kiểm tra trước những gì tra được (version, namespace, repo đang làm gì) bằng lệnh read-only.
+- Sau đó chỉ hỏi bạn các **quyết định**, theo từng vòng ngắn 2–4 câu. Câu nào cũng có đáp án đề xuất, nên bạn trả lời gọn kiểu "1 đồng ý, 2 chọn B, 3 chưa chắc".
+- Cuối cùng Claude viết một **Context brief** ngắn và nhờ bạn xác nhận. Brief được lưu vào thư mục task (`/infra-task`) hoặc vào `PROGRESS.md`.
+
+Mẹo: đừng chỉ "đồng ý" mọi câu. Thấy đề xuất không hợp thì phản biện; giá trị nằm ở chỗ đó.
+
+### 5.6. Ghi nhớ giữa các phiên
+
+Một phiên chạy lâu sẽ bị nén ngữ cảnh nhiều lần, mỗi lần có thể rơi mất chi tiết. Hãy giữ những gì quan trọng trong file:
+
+| Cái gì | Ở đâu |
+|---|---|
+| Thông tin ổn định: môi trường, quy ước, **Standing rules** | `CLAUDE.md` của project |
+| Trạng thái hiện tại, việc còn treo, quyết định | `PROGRESS.md` |
+| Một thay đổi L2/L3 | thư mục task (`/infra-task`) |
+| Kiến thức dùng lâu dài | runbook, concept note, ADR (`infra-docs`) |
+
+- Đầu mỗi phiên, Claude đọc `PROGRESS.md`; xong mỗi việc hoặc mỗi quyết định quan trọng thì cập nhật.
+- Khi bạn nói "luôn luôn …", "đừng bao giờ …", "nhớ là …", Claude đề xuất một dòng cho mục **Standing rules** trong `CLAUDE.md`. Bạn không phải nhắc lại ở mỗi phiên.
+- Nên mỗi chủ đề một phiên. Mở phiên mới bằng câu: "Đọc CLAUDE.md và PROGRESS.md rồi tiếp tục."
 
 ---
 

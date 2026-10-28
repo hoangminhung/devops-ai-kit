@@ -8,6 +8,12 @@
 
 <1–3 lines: what infrastructure this repo manages, and for which system.>
 
+## Start of every session
+
+1. Read `PROGRESS.md` (current state, open items, decisions).
+2. Check the target in the Environment registry before the first command that touches infrastructure.
+3. After each task or important decision, update `PROGRESS.md`.
+
 ## Environment registry
 
 The AI must check this table before it touches infrastructure.
@@ -37,6 +43,13 @@ The AI must check this table before it touches infrastructure.
 - <e.g. node pools are named `np-<purpose>-<nn>`>
 - <e.g. use Sealed Secrets instead of ESO because ...>
 
+## Standing rules
+
+Rules the user gave in chat that must always apply. Claude proposes a line here when the user says "always …", "never …" or "remember …".
+
+- <e.g. never commit to main; create a branch, the user merges the PR>
+- <e.g. production is read-only for the AI>
+
 ## Common commands
 
 ```bash
@@ -48,3 +61,4 @@ The AI must check this table before it touches infrastructure.
 - Language: <keep the kit default (`--lang` at install time), or write your own choice here>
 - Concept notes are stored in: <e.g. ~/kb/concepts/ (personal KB) or docs/concepts/>
 - Runbooks: `docs/runbooks/` · ADR: `docs/adr/` · Change records: `docs/changes/`
+- Progress file: `PROGRESS.md` (template: `templates/PROGRESS.md` in devops-ai-kit). In a shared repo you may keep it out of git with `.git/info/exclude`.

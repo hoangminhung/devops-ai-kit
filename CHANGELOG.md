@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- New skill `grill-me`: asks the user short rounds of questions (each with a recommended answer) to fill in missing context before acting. Facts are checked with read-only commands; only decisions are asked. Idea adapted from mattpocock/skills (MIT).
+- `00-core` §9 "Memory across sessions": where to keep project facts, standing rules, current state and decisions; read the progress file at session start and update it after each task.
+- `/infra-task` adds the task to the progress file and moves it to the Done log when it closes; it runs `grill-me` when the brief is unclear.
+- Templates: new `templates/PROGRESS.md`; `project-CLAUDE.md` gets "Start of every session" and "Standing rules".
+
 ## 1.0.1 — 2026-10-28
 
 - Hook: show the kubeconfig file name (`kubeconfig=kubeconfig.hetzner-live`) when it is not the default one, and use it to detect production targets. Many clusters name their only context `default`, so before this a live cluster was not marked as production.

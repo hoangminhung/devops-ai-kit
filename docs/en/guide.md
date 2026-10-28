@@ -63,13 +63,13 @@ devops-ai-kit/
 ├── claude/                                # content installed into ~/.claude/
 │   ├── rules/devops-kit/                  # 00-core + 7 technology rules
 │   ├── lang/                              # en.md, vi.md → installed as 01-language.md by --lang
-│   ├── skills/                            # 13 skills
+│   ├── skills/                            # 14 skills
 │   ├── agents/                            # 5 subagents
 │   ├── hooks/devops-kit/                  # infra-context-guard.py
 │   └── settings.devops-kit.json           # permissions + hook (merged, not overwritten)
 ├── scripts/                               # kit.py (installer), run-kit.sh, validate.py
 ├── setup/k8s/                             # read-only RBAC + script that builds the AI kubeconfig
-├── templates/                             # sample project CLAUDE.md, extra .gitignore lines
+├── templates/                             # sample project CLAUDE.md, PROGRESS.md, extra .gitignore lines
 ├── tests/                                 # tests for the hook and the installer
 └── docs/
     ├── en/                                # guide.md (this file), glossary.md, cloud-readonly.md
@@ -277,6 +277,7 @@ Add `--env DEVOPS_KIT_BLOCK_PROD=1`. The hook will **deny** (instead of ask) eve
 ```bash
 cd ~/projects/project-A
 cp ~/devops-ai-kit/templates/project-CLAUDE.md ./CLAUDE.md        # then fill it in
+cp ~/devops-ai-kit/templates/PROGRESS.md ./PROGRESS.md            # Claude keeps it up to date
 cat ~/devops-ai-kit/templates/gitignore-additions.txt >> .gitignore
 ```
 
@@ -362,6 +363,35 @@ Every doc marks information as ✅ (checked with a command) · 📖 (from the do
 2. Ask for a concept note from that result, with examples on your own cluster.
 3. While you work, if your Claude Code version has output styles, turn on the explanatory style (`/output-style`, choose Explanatory) so Claude adds "why" explanations as it works. Turn it off when you do not need it, to keep answers short.
 4. The "Self-check questions" part at the end of a concept note: use it to test yourself, or give it to new people during onboarding.
+
+### 5.5. When Claude lacks context: `/grill-me`
+
+Use it when your request is still vague, or when you feel Claude is guessing. Claude also starts it by itself when important information is missing.
+
+```
+/grill-me move the monitoring stack to the new cluster
+```
+
+- Claude first checks the facts it can find itself (versions, namespaces, what the repo does) with read-only commands.
+- Then it asks you only for **decisions**, in short rounds of 2–4 questions. Each question has a recommended answer, so you can reply "1 yes, 2 option B, 3 not sure".
+- At the end it writes a short **Context brief** and asks you to confirm it. The brief goes into the task folder (`/infra-task`) or into `PROGRESS.md`.
+
+Tip: do not just say "agree" to everything. Push back when a recommendation does not fit; that is where the value is.
+
+### 5.6. Memory across sessions
+
+A long session is compacted many times, and each time some details can be lost. Keep what matters in files instead:
+
+| What | Where |
+|---|---|
+| Stable facts: environments, conventions, **Standing rules** | project `CLAUDE.md` |
+| Current state, open items, decisions | `PROGRESS.md` |
+| One L2/L3 change | its task folder (`/infra-task`) |
+| Knowledge that lasts | runbook, concept note, ADR (`infra-docs`) |
+
+- Claude reads `PROGRESS.md` at the start of a session and updates it after each task or important decision.
+- When you say "always …", "never …" or "remember …", Claude proposes a line for **Standing rules** in `CLAUDE.md`. You do not need to repeat the rule in every session.
+- Prefer one session per topic. Start a new session with: "Read CLAUDE.md and PROGRESS.md, then continue."
 
 ---
 

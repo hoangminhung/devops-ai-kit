@@ -31,7 +31,8 @@ You (the main session) are the coordinator: you write the plan, implement and ex
    - the target environment;
    - constraints (maintenance window, allowed downtime);
    - **the suggested risk level (L1/L2/L3) and why**.
-4. Ask the user to confirm the risk level and scope before you continue. For L1 → use the "Short workflow for L1" at the end of this file.
+4. Ask the user to confirm the risk level and scope before you continue. If the goal, target or constraints are still unclear, run the `grill-me` interview first. For L1 → use the "Short workflow for L1" at the end of this file.
+5. If the project has a progress file (`00-core` §9), add the task under **Open items** with a link to the task folder.
 
 **Resume a task (`resume <folder>`):**
 
@@ -145,7 +146,7 @@ For each step in the plan:
    - remaining risks;
    - follow-ups;
    - docs created.
-2. Update to `Status: Done`.
+2. Update to `Status: Done`. If the project has a progress file, move the task to **Done log** and update **Current state**.
 3. If the AI made the same mistake more than once in this task, or the reviewer caught a mistake that a rule should have blocked: suggest the exact line to add to a rule / skill of the kit.
 
 ## Short workflow for L1
