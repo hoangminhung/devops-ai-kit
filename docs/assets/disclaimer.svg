@@ -3,11 +3,8 @@
   <style>
     .label { font: 700 26px "Segoe UI", Helvetica, Arial, sans-serif; fill: #ff3b3b; letter-spacing: 6px; }
     .text  { font: 800 40px "Segoe UI", Helvetica, Arial, sans-serif; fill: #ffd400; }
-    .blink { animation: blink 1.2s steps(1, end) infinite; }
-    @keyframes blink { 50% { opacity: 0; } }
-    @media (prefers-reduced-motion: reduce) { .blink { animation: none; } }
   </style>
   <rect width="1200" height="150" rx="14" fill="#000000"/>
   <text class="label" x="600" y="46" text-anchor="middle">⚠ DISCLAIMER ⚠</text>
-  <text class="text blink" x="600" y="110" text-anchor="middle" textLength="1130" lengthAdjust="spacingAndGlyphs">This tool doesn't make you better—it just makes you better at using AI.</text>
+  <text class="text" x="600" y="110" text-anchor="middle" textLength="1130" lengthAdjust="spacingAndGlyphs">This tool doesn't make you better—it just makes you better at using AI.</text>
 </svg>
