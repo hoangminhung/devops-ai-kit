@@ -268,7 +268,7 @@ Xem [cloud-readonly.md](cloud-readonly.md). Tóm tắt:
 
 ### 3.3. Chặn cứng mọi thay đổi production (tùy chọn)
 
-Đặt thêm `--env DEVOPS_KIT_BLOCK_PROD=1`. Hook sẽ **từ chối** (thay vì hỏi) mọi lệnh mutating mà đích có tên khớp mẫu production (`prod`, `prd`, `production`, `live`). Claude sẽ được báo là phải chuẩn bị PR GitOps hoặc đưa lệnh cho bạn tự chạy. Đổi mẫu nhận diện bằng `--env DEVOPS_KIT_PROD_PATTERN='<regex>'`.
+Đặt thêm `--env DEVOPS_KIT_BLOCK_PROD=1`. Hook sẽ **từ chối** (thay vì hỏi) mọi lệnh mutating mà tên đích (context, namespace, tên file kubeconfig, workspace, …) khớp mẫu production (`prod`, `prd`, `production`, `live`). Claude sẽ được báo là phải chuẩn bị PR GitOps hoặc đưa lệnh cho bạn tự chạy. Đổi mẫu nhận diện bằng `--env DEVOPS_KIT_PROD_PATTERN='<regex>'`.
 
 ---
 
@@ -310,6 +310,7 @@ Bạn sẽ thấy các khác biệt so với trước:
 - Hộp thoại xác nhận của Claude Code có dòng của hook, ví dụ:
   `devops-ai-kit: ⚠️ PRODUCTION · helm upgrade loki → context=aks-prod-weu namespace=monitoring`
   Đây là chỗ để bạn bắt lỗi "nhầm cluster" trước khi quá muộn.
+  Nếu đang dùng kubeconfig khác file mặc định, dòng này hiện thêm tên file (`kubeconfig=kubeconfig.hetzner-live`). Rất có ích khi context của mọi cluster đều tên là `default`.
 - Sửa file `.tf` thì chuẩn Terraform tự nạp; sửa values Helm thì chuẩn Helm tự nạp…
 - Báo cáo "xong" luôn kèm lệnh và output làm bằng chứng.
 
