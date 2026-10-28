@@ -62,3 +62,20 @@ If you are not sure about the level, choose the higher one and explain why.
 - Tasks at L1 or higher: write a change record (skill `infra-docs`).
 - If the user does not know a tool / tech stack well, or it is new in the project: offer to write a concept note.
 - Output language is defined in `01-language.md`.
+
+## 9. Memory across sessions
+
+Chat history is lost when the context is compacted or a new session starts. Keep what matters in files, not only in the chat:
+
+| What | Where |
+|---|---|
+| Stable project facts: environments, conventions, standing rules | the project's `CLAUDE.md` |
+| Current state, open items, recent decisions | the progress file: `PROGRESS.md` at the workspace root, or the path the project's CLAUDE.md names |
+| One L2/L3 change | its task folder (`/infra-task`) |
+| Knowledge that lasts | `infra-docs`: runbook, concept note, ADR |
+
+- At the start of a session in a project: if the progress file exists, read it and tell the user in 1–3 lines where things stand.
+- Update the progress file after each finished task, after an important decision, and before a long pause. Parts: **Current state**, **Open items** (checkboxes), **Decisions** (with dates), **Done log**. Keep it under ~200 lines.
+- When the user states a lasting rule ("always …", "never …", "remember …"), propose the exact line for **Standing rules** in the project's CLAUDE.md, and write it after the user agrees.
+- If important context is missing, ask instead of guessing (skill `grill-me`).
+- No secrets in memory files. Memory can be old: check versions, branch names and live state again before you act on them.

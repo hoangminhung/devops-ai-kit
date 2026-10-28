@@ -49,3 +49,6 @@ Terms used consistently across the kit's rules, skills, agents and docs. The Vie
 | **ADR** | Architecture decision record. | ADR |
 | **Postmortem** | Blameless incident review. | postmortem |
 | **Task folder** | The per-task folder created by `/infra-task`, which lets work resume across sessions and machines. | thư mục task |
+| **Progress file** | `PROGRESS.md`: current state, open items, decisions and done log of a project. Read at session start, updated after each task. | file tiến độ |
+| **Standing rules** | Lasting rules the user gave in chat, kept in the project's `CLAUDE.md` so they apply in every session. | quy tắc thường trực |
+| **Context brief** | The short summary `grill-me` writes at the end: decisions, facts found, open questions, assumptions. | bản tóm tắt ngữ cảnh |
