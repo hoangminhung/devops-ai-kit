@@ -1,0 +1,106 @@
+# Read-only identity for AI agents (Claude Code) — devops-ai-kit
+#
+# What this grants:
+#   * built-in ClusterRole "view": read namespaced resources in every namespace.
+#     "view" deliberately EXCLUDES Secrets, so the agent cannot read secret values.
+#   * "ai-cluster-reader": read cluster-scoped objects (nodes, PVs, StorageClasses,
+#     CRDs, RBAC, webhooks) and the CRD groups of common platform components.
+#
+# What this does NOT grant: any write verb, Secrets, pods/exec, pods/portforward.
+#
+# Extend `ai-cluster-reader` with the API groups of other operators you run.
+# Never add the core group "" with resource "*" (that would include Secrets), and
+# avoid CRD groups whose custom resources store credentials inline.
+#
+# Apply with YOUR admin credentials (not the AI kubeconfig):
+#   kubectl --context <ctx> apply -f ai-readonly-rbac.yaml
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ai-access
+  labels:
+    app.kubernetes.io/managed-by: devops-ai-kit
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: claude-readonly
+  namespace: ai-access
+  labels:
+    app.kubernetes.io/managed-by: devops-ai-kit
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ai-cluster-reader
+  labels:
+    app.kubernetes.io/managed-by: devops-ai-kit
+rules:
+  # Cluster-scoped core objects (NOT secrets)
+  - apiGroups: [""]
+    resources: ["nodes", "namespaces", "persistentvolumes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups:
+      - "storage.k8s.io"
+      - "apiextensions.k8s.io"
+      - "apiregistration.k8s.io"
+      - "rbac.authorization.k8s.io"
+      - "admissionregistration.k8s.io"
+      - "scheduling.k8s.io"
+      - "node.k8s.io"
+      - "networking.k8s.io"
+      - "policy"
+      - "events.k8s.io"
+      - "metrics.k8s.io"
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+  # Platform components (CRD groups). Remove groups you do not run, add the ones you do.
+  - apiGroups:
+      - "monitoring.coreos.com"              # Prometheus Operator
+      - "longhorn.io"                        # Longhorn
+      - "postgres-operator.crunchydata.com"  # Crunchy PGO
+      - "postgresql.cnpg.io"                 # CloudNativePG
+      - "argoproj.io"                        # Argo CD / Rollouts
+      - "cert-manager.io"
+      - "acme.cert-manager.io"
+      - "external-secrets.io"                # ExternalSecret/SecretStore specs hold references, not values
+      - "gateway.networking.k8s.io"
+      - "cilium.io"
+      - "velero.io"
+      - "snapshot.storage.k8s.io"
+      - "kyverno.io"
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ai-claude-readonly-view
+  labels:
+    app.kubernetes.io/managed-by: devops-ai-kit
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+  - kind: ServiceAccount
+    name: claude-readonly
+    namespace: ai-access
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ai-claude-readonly-cluster-reader
+  labels:
+    app.kubernetes.io/managed-by: devops-ai-kit
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ai-cluster-reader
+subjects:
+  - kind: ServiceAccount
+    name: claude-readonly
+    namespace: ai-access

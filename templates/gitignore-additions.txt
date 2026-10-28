@@ -1,0 +1,15 @@
+# --- devops-ai-kit: never commit these ---
+*.tfstate
+*.tfstate.*
+tfplan
+*.tfplan
+crash.log
+.terraform/
+.env
+.env.*
+*.pem
+*.key
+kubeconfig*
+ai-config*
+CLAUDE.local.md
+.claude/settings.local.json

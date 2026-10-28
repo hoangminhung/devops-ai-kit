@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+
+# Installer backups and local work notes
+*.bak*
+.devops-kit-backup/
+.work/
+
+# Never commit credentials or state
+ai-config*
+kubeconfig*
+*.kubeconfig
+*.tfstate*
+.env*

@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install PyYAML
+        run: python -m pip install --disable-pip-version-check PyYAML
+
+      - name: Validate kit content
+        run: python scripts/validate.py
+
+      - name: Unit tests (hook + installer)
+        run: python -m unittest discover -s tests -v
+
+      - name: ShellCheck
+        run: shellcheck -S warning ./*.sh scripts/*.sh setup/k8s/*.sh
+
+      - name: Installer dry run in a temp HOME
+        run: |
+          HOME="$(mktemp -d)" ./install.sh --dry-run --lang vi
