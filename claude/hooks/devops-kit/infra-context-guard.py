@@ -184,7 +184,18 @@ def is_prod(*names):
 
 # --- target resolvers --------------------------------------------------------
 
-def kube_target(ctx, ns, kubeconfig, env, all_ns=False):
+def kubeconfig_name(kubeconfig, env):
+    """File name of the kubeconfig in use, or "" for the default ~/.kube/config.
+
+    Many clusters call their only context "default", so the file name is often
+    the only thing that tells the targets apart (e.g. kubeconfig.hetzner-live).
+    """
+    path = kubeconfig or env.get("KUBECONFIG") or os.environ.get("KUBECONFIG") or ""
+    first = path.split(os.pathsep)[0].rstrip("/\\")
+    return re.split(r"[\\/]", first)[-1] if first else ""
+
+
+def kube_target(ctx, ns, kubeconfig, env, all_ns=False, cwd=None):
     environ = dict(os.environ, **env)
     cmd = ["kubectl", "config", "view", "--minify",
            "-o", "jsonpath={.contexts[0].name}|{.contexts[0].context.namespace}"]
@@ -192,7 +203,7 @@ def kube_target(ctx, ns, kubeconfig, env, all_ns=False):
         cmd += ["--kubeconfig", kubeconfig]
     if ctx:
         cmd += ["--context", ctx]
-    resolved = run(cmd, env=environ)
+    resolved = run(cmd, env=environ, cwd=cwd if cwd and os.path.isdir(cwd) else None)
     cur_ctx, _, cur_ns = resolved.partition("|")
     ctx = ctx or cur_ctx or "unknown"
     ns = "ALL namespaces" if all_ns else (ns or cur_ns or "default")
@@ -255,7 +266,12 @@ def gcloud_project(flag_project, env):
 
 # --- detectors: return (summary, [names used for prod check], readonly_ctx) or None
 
-def detect_kubectl(base, args, env):
+def kube_summary(ctx, ns, kc_name):
+    shown = f"context={ctx}" + (f" kubeconfig={kc_name}" if kc_name else "")
+    return shown + (f" namespace={ns}" if ns is not None else "")
+
+
+def detect_kubectl(base, args, env, cwd):
     pos, flags = parse_args(args, KUBECTL_VALUE_FLAGS)
     if not pos:
         return None
@@ -277,29 +293,32 @@ def detect_kubectl(base, args, env):
         return None
     if sub == "config":
         return (f"{base} config {nxt} (changes the local kubeconfig selection)", [], False)
+    kubeconfig = flag(flags, "--kubeconfig")
     ctx, ns = kube_target(
-        flag(flags, "--context"), flag(flags, "-n", "--namespace"),
-        flag(flags, "--kubeconfig"), env,
-        all_ns=bool(flags.get("-A") or flags.get("--all-namespaces")),
+        flag(flags, "--context"), flag(flags, "-n", "--namespace"), kubeconfig, env,
+        all_ns=bool(flags.get("-A") or flags.get("--all-namespaces")), cwd=cwd,
     )
+    kc_name = kubeconfig_name(kubeconfig, env)
     shown = " ".join(pos[:3])
     if len(pos) > 3:
         shown += " …"
-    return (f"{base} {shown} → context={ctx} namespace={ns}", [ctx, ns], ctx.endswith("-ro"))
+    return (f"{base} {shown} → {kube_summary(ctx, ns, kc_name)}", [ctx, ns, kc_name], ctx.endswith("-ro"))
 
 
-def detect_helm(args, env):
+def detect_helm(args, env, cwd):
     pos, flags = parse_args(args, HELM_VALUE_FLAGS)
     if not pos or pos[0] not in HELM_MUTATING:
         return None
     if flags.get("--dry-run"):
         return None
+    kubeconfig = flag(flags, "--kubeconfig")
     ctx, ns = kube_target(
-        flag(flags, "--kube-context"), flag(flags, "-n", "--namespace"),
-        flag(flags, "--kubeconfig"), env,
+        flag(flags, "--kube-context"), flag(flags, "-n", "--namespace"), kubeconfig, env, cwd=cwd,
     )
+    kc_name = kubeconfig_name(kubeconfig, env)
     release = pos[1] if len(pos) > 1 else "?"
-    return (f"helm {pos[0]} {release} → context={ctx} namespace={ns}", [ctx, ns, release], ctx.endswith("-ro"))
+    return (f"helm {pos[0]} {release} → {kube_summary(ctx, ns, kc_name)}",
+            [ctx, ns, release, kc_name], ctx.endswith("-ro"))
 
 
 def detect_terraform(base, args, env, cwd):
@@ -382,12 +401,14 @@ def detect_argocd(args):
     return (f"argocd {' '.join(pos[:pos.index(hit) + 1])} {app} → server={server}", [app, server], False)
 
 
-def detect_velero(args, env):
+def detect_velero(args, env, cwd):
     pos, flags = parse_args(args, {"--kubecontext", "-n", "--namespace", "--kubeconfig", "--from-backup", "--from-schedule"})
     if len(pos) < 2 or pos[1] not in VELERO_MUTATING:
         return None
-    ctx, _ = kube_target(flag(flags, "--kubecontext"), None, flag(flags, "--kubeconfig"), env)
-    return (f"velero {pos[0]} {pos[1]} → context={ctx}", [ctx], ctx.endswith("-ro"))
+    kubeconfig = flag(flags, "--kubeconfig")
+    ctx, _ = kube_target(flag(flags, "--kubecontext"), None, kubeconfig, env, cwd=cwd)
+    kc_name = kubeconfig_name(kubeconfig, env)
+    return (f"velero {pos[0]} {pos[1]} → {kube_summary(ctx, None, kc_name)}", [ctx, kc_name], ctx.endswith("-ro"))
 
 
 def detect_git_push(args, cwd):
@@ -415,8 +436,23 @@ def detect_psql(args):
     return (f"psql → {target}", [target], False)
 
 
-def analyse_segment(segment, cwd, depth=0):
+def exported_vars(segment, cwd):
+    """KEY=VALUE pairs set by an `export` segment, with $PWD and ~ expanded."""
+    tokens = tokenize(segment)
+    if not tokens or tokens[0] != "export":
+        return {}
+    found = {}
+    for tok in tokens[1:]:
+        if ENV_ASSIGN.match(tok):
+            key, _, val = tok.partition("=")
+            val = val.replace("${PWD}", cwd).replace("$PWD", cwd)
+            found[key] = os.path.expanduser(val)
+    return found
+
+
+def analyse_segment(segment, cwd, depth=0, exported=None):
     tokens, env = peel(tokenize(segment))
+    env = dict(exported or {}, **env)
     if not tokens:
         return []
     base = re.split(r"[\\/]", tokens[0])[-1]
@@ -431,9 +467,9 @@ def analyse_segment(segment, cwd, depth=0):
         return []
 
     if base in ("kubectl", "oc"):
-        hit = detect_kubectl(base, args, env)
+        hit = detect_kubectl(base, args, env, cwd)
     elif base == "helm":
-        hit = detect_helm(args, env)
+        hit = detect_helm(args, env, cwd)
     elif base in ("terraform", "tofu"):
         hit = detect_terraform(base, args, env, cwd)
     elif base == "az":
@@ -447,7 +483,7 @@ def analyse_segment(segment, cwd, depth=0):
     elif base == "argocd":
         hit = detect_argocd(args)
     elif base == "velero":
-        hit = detect_velero(args, env)
+        hit = detect_velero(args, env, cwd)
     elif base == "git":
         hit = detect_git_push(args, cwd)
     elif base == "psql":
@@ -458,11 +494,13 @@ def analyse_segment(segment, cwd, depth=0):
 
 
 def analyse_command(command, cwd, depth=0):
-    hits = []
+    hits, exported = [], {}
     for segment in SEGMENT_SPLIT.split(command):
         segment = segment.strip()
         if segment:
-            hits.extend(analyse_segment(segment, cwd, depth))
+            # `export KUBECONFIG=...; kubectl ...` must use the exported file for the later segments.
+            exported.update(exported_vars(segment, cwd))
+            hits.extend(analyse_segment(segment, cwd, depth, exported))
     return hits
 
 

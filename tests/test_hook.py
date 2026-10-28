@@ -201,6 +201,52 @@ class MutatingCommands(HookTestCase):
         self.assertEqual(reason.count(" | "), 1)
 
 
+class KubeconfigName(HookTestCase):
+    """Many clusters name their only context "default"; the kubeconfig file name is then the real target."""
+
+    def reason(self, command, **kwargs):
+        decision, reason = self.decision(command, env={"FAKE_KUBE_CTX": "default", **kwargs.pop("env", {})}, **kwargs)
+        self.assertEqual(decision, "ask", command)
+        return reason
+
+    def test_kubeconfig_flag_is_shown(self):
+        reason = self.reason("kubectl --kubeconfig /x/kubeconfig.azure-sandbox delete pod web-1")
+        self.assertIn("kubeconfig=kubeconfig.azure-sandbox", reason)
+        self.assertNotIn("PRODUCTION", reason)
+
+    def test_production_detected_from_kubeconfig_name(self):
+        reason = self.reason("kubectl --kubeconfig ./kubeconfig.hetzner-live delete pod web-1")
+        self.assertIn("PRODUCTION", reason)
+
+    def test_exported_kubeconfig_applies_to_later_segments(self):
+        reason = self.reason("export KUBECONFIG=$PWD/kubeconfig.hetzner-live; kubectl -n app delete pod web-1")
+        self.assertIn("kubeconfig=kubeconfig.hetzner-live", reason)
+        self.assertIn("PRODUCTION", reason)
+
+    def test_inline_kubeconfig_assignment(self):
+        reason = self.reason("KUBECONFIG=~/lea/kubeconfig.azure-live kubectl apply -f app.yaml")
+        self.assertIn("kubeconfig=kubeconfig.azure-live", reason)
+        self.assertIn("PRODUCTION", reason)
+
+    def test_kubeconfig_from_session_environment(self):
+        reason = self.reason("helm rollback web 2", env={"KUBECONFIG": "/k/kubeconfig.hetzner-live"})
+        self.assertIn("kubeconfig=kubeconfig.hetzner-live", reason)
+        self.assertIn("PRODUCTION", reason)
+
+    def test_helm_kubeconfig_flag(self):
+        reason = self.reason("helm upgrade web ./chart --kubeconfig kubeconfig.azure-live")
+        self.assertIn("PRODUCTION", reason)
+
+    def test_default_kubeconfig_is_not_shown(self):
+        reason = self.reason("kubectl delete pod web-1")
+        self.assertNotIn("kubeconfig=", reason)
+
+    def test_blocked_on_production_kubeconfig(self):
+        decision, _ = self.decision("export KUBECONFIG=./kubeconfig.hetzner-live && kubectl delete ns tmp",
+                                    env={"FAKE_KUBE_CTX": "default", "DEVOPS_KIT_BLOCK_PROD": "1"})
+        self.assertEqual(decision, "deny")
+
+
 class PowerShellAndWindows(HookTestCase):
     def assert_ask(self, command, *expected, tool="PowerShell"):
         out = self.run_hook(command, tool=tool)

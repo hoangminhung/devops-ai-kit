@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.1 — 2026-10-28
+
+- Hook: show the kubeconfig file name (`kubeconfig=kubeconfig.hetzner-live`) when it is not the default one, and use it to detect production targets. Many clusters name their only context `default`, so before this a live cluster was not marked as production.
+- Hook: `export KUBECONFIG=...` earlier in the same command (`export ...; kubectl ...`) is now used for the later kubectl / helm / velero calls; relative kubeconfig paths resolve against the session's working folder.
+- CI: `actions/checkout` and `actions/setup-python` v7 (Node 24).
+
 ## 1.0.0 — 2026-10-28
 
 First public release. Earlier versions were used internally and are not published.

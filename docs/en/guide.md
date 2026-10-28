@@ -268,7 +268,7 @@ See [cloud-readonly.md](cloud-readonly.md). Summary:
 
 ### 3.3. Hard-block every production change (optional)
 
-Add `--env DEVOPS_KIT_BLOCK_PROD=1`. The hook will **deny** (instead of ask) every mutating command whose target name matches the production pattern (`prod`, `prd`, `production`, `live`). Claude is told to prepare a GitOps PR or give you the command to run yourself. Change the pattern with `--env DEVOPS_KIT_PROD_PATTERN='<regex>'`.
+Add `--env DEVOPS_KIT_BLOCK_PROD=1`. The hook will **deny** (instead of ask) every mutating command whose target name (context, namespace, kubeconfig file name, workspace, …) matches the production pattern (`prod`, `prd`, `production`, `live`). Claude is told to prepare a GitOps PR or give you the command to run yourself. Change the pattern with `--env DEVOPS_KIT_PROD_PATTERN='<regex>'`.
 
 ---
 
@@ -310,6 +310,7 @@ You will see these differences:
 - The Claude Code confirm dialog shows a line from the hook, for example:
   `devops-ai-kit: ⚠️ PRODUCTION · helm upgrade loki → context=aks-prod-weu namespace=monitoring`
   This is where you catch a "wrong cluster" mistake before it is too late.
+  If the kubeconfig in use is not the default one, the line also shows its file name (`kubeconfig=kubeconfig.hetzner-live`). This helps when every cluster's context is just called `default`.
 - When you edit a `.tf` file, the Terraform standards load; when you edit Helm values, the Helm standards load…
 - A "done" report always includes commands and output as proof.
 
