@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/disclaimer.svg" alt="Disclaimer: This tool doesn't make you better—it just makes you better at using AI." width="100%">
+</p>
+
 # devops-ai-kit
 
 > Bản tiếng Anh là bản chuẩn; bản tiếng Việt có thể cập nhật chậm hơn. English: [README.md](README.md)
