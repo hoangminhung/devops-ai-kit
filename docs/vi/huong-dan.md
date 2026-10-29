@@ -459,7 +459,7 @@ Một phiên chạy lâu sẽ bị nén ngữ cảnh nhiều lần, mỗi lần 
 - Mỗi file có dòng `Last reviewed: <ngày>`. Rà lại các file **3–6 tháng một lần**: công cụ hạ tầng đổi nhanh (Promtail, Grafana Agent, ingress-nginx đều đã EOL chỉ trong khoảng một năm).
 - Sau mỗi `/infra-task`, xem mục đề xuất cải tiến ở bước đóng task. AI mắc lỗi lặp lại thì thêm đúng một dòng chặn đúng chỗ, đừng viết thêm cả đoạn.
 - Định kỳ chạy `/doctor prompt-audit` trong Claude Code (nếu version có) để tìm quy tắc lỗi thời, tham chiếu tới file không tồn tại, hoặc mâu thuẫn. Đặc biệt quan trọng nếu bạn cài cả kit này lẫn các bộ khác.
-- **Kiểm tra tự động trước khi commit** (CI cũng chạy đúng các lệnh này trên mỗi push / PR):
+- **Kiểm tra tự động trước khi commit** (CI cũng chạy đúng các lệnh này trên mỗi pull request vào `main`; chưa pass thì không merge được):
 
   ```bash
   python3 scripts/validate.py                       # frontmatter, name, paths, độ dài, file được tham chiếu, còn sót tiếng Việt

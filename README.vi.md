@@ -79,7 +79,7 @@ python3 -m unittest discover -s tests -v     # test hook + bộ cài (HOME tạm
 shellcheck -S warning *.sh scripts/*.sh setup/k8s/*.sh
 ```
 
-CI (`.github/workflows/ci.yml`) chạy đúng các kiểm tra này trên mỗi push và pull request.
+CI (`.github/workflows/ci.yml`) chạy đúng các kiểm tra này một lần cho mỗi pull request vào `main`. Nhánh `main` được bảo vệ: nút merge chỉ bấm được khi CI đã pass.
 
 ## Khác gì so với các kit khác
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- CI: run once per pull request to `main` (plus manual runs); no more duplicate runs on branch pushes, after merge, or on tags. Older runs of the same PR are cancelled.
+
 ## 1.1.0 — 2026-10-28
 
 - README: disclaimer banner at the top.
