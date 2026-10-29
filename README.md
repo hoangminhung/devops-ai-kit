@@ -79,7 +79,7 @@ python3 -m unittest discover -s tests -v     # hook + installer tests (temp HOME
 shellcheck -S warning *.sh scripts/*.sh setup/k8s/*.sh
 ```
 
-CI (`.github/workflows/ci.yml`) runs the same checks on every push and pull request.
+CI (`.github/workflows/ci.yml`) runs the same checks once on every pull request to `main`. `main` is protected: the merge button stays disabled until CI passes.
 
 ## How this differs from other kits
 

@@ -459,7 +459,7 @@ A long session is compacted many times, and each time some details can be lost. 
 - Each file has a `Last reviewed: <date>` line. Review the files **every 3–6 months**: infrastructure tools change fast (Promtail, Grafana Agent and ingress-nginx all reached EOL within about a year).
 - After each `/infra-task`, read the improvement ideas in the close-task step. If the AI repeats a mistake, add exactly one line to block it in the right place; do not add a whole paragraph.
 - Run `/doctor prompt-audit` in Claude Code from time to time (if your version has it) to find outdated rules, links to missing files, or conflicts. This matters most if you install this kit together with other kits.
-- **Automatic checks before you commit** (CI runs the same commands on every push / PR):
+- **Automatic checks before you commit** (CI runs the same commands on every pull request to `main`; merge is blocked until they pass):
 
   ```bash
   python3 scripts/validate.py                       # frontmatter, name, paths, length, referenced files, leftover Vietnamese

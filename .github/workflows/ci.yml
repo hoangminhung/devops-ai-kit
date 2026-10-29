@@ -1,8 +1,16 @@
 name: CI
 
+# Runs once per pull request: this is the check that branch protection waits for
+# before the merge button is enabled. No run after merge or on tags: with "branch
+# must be up to date" on, the PR run already tested the exact result of the merge.
 on:
-  push:
   pull_request:
+    branches: [main]
+  workflow_dispatch:  # manual run (Actions tab → CI → Run workflow)
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
