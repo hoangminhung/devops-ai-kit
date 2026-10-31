@@ -2,7 +2,7 @@
 name: infra-task
 description: Run a risky infrastructure change end-to-end — recon of the live state, version research, a written plan, independent plan and code review, gated execution, evidence-based verification and handover docs. Use for L2/L3 work such as deploying or upgrading platform components (monitoring, storage, ingress), migrating databases or clusters, provisioning cloud environments, and network/IAM/storage changes on shared environments. Also resumes an unfinished task from its task folder.
 when_to_use: Use when deploying or upgrading infrastructure components on a shared environment, migrating a database or cluster, building new cloud infrastructure, changing storage / network / IAM, or resuming an unfinished infrastructure task. Vietnamese triggers — "triển khai hoặc nâng cấp thành phần hạ tầng trên môi trường dùng chung", "migrate database hoặc cluster", "dựng hạ tầng cloud mới", "thay đổi storage / network / IAM", "tiếp tục một task hạ tầng đang dở".
-argument-hint: "<task description> | resume <task folder>"
+argument-hint: "<task description> [--mode auto|interactive] | resume <task folder>"
 disable-model-invocation: true
 ---
 
@@ -20,13 +20,27 @@ This workflow exists so that every risky change:
 
 You (the main session) are the coordinator: you write the plan, implement and execute yourself. You give recon, research, review, verify and docs to subagents. Subagents cannot call other subagents and only return a summary, so every result is saved as a file in the task folder.
 
+## Run mode: `--mode auto | interactive`
+
+> **Hard limit, the same in both modes:** GATE 1, GATE 2 and **every mutating command** always wait for the user's explicit approval. A mode never skips a gate, never answers a gate for the user, and never runs a mutating command without the user's OK. Infrastructure has no "build to check it": a real state change always needs a human.
+
+| Mode | What it changes (only phases that do not change state) |
+|---|---|
+| `interactive` (default) | After each phase, show a short summary and wait for the user before the next phase. |
+| `auto` | Run the paper phases without stopping: Phases 1 → 4 (recon, research, plan, plan review) up to GATE 1; after GATE 1, Phases 5 → 6 up to GATE 2; after execution, Phases 8 → 10. Follow your own recommendations and ask only when a decision cannot be made from facts. |
+
+- **L3 is always `interactive`.** If the user asks for `--mode auto` on an L3 task, say so and use `interactive`.
+- `auto` is allowed for L1 / L2 only when the user asks for it. Without `--mode`, use `interactive`.
+- Write the mode on the second line of `00-brief.md`: `Mode: auto` or `Mode: interactive`. Resume keeps it. The user can switch at any time ("switch to interactive").
+- If the risk level is raised to L3 during the task, switch to `interactive` and tell the user.
+
 ## Phase 0 — Start or resume
 
 **New task:**
 
 1. Find the repo root (`git rev-parse --show-toplevel`). If you are not in a git repo, ask the user where to save the task folder.
 2. Create the folder `docs/changes/<YYYY-MM-DD>-<short-slug>/`.
-3. Write `00-brief.md`. The first line is `Status: Phase 0 — Brief · Updated: <date time>`. The content has:
+3. Write `00-brief.md`. The first line is `Status: Phase 0 — Brief · Updated: <date time>`, the second is `Mode: <mode>` (see "Run mode"). The content has:
    - the original request and the goal;
    - **in scope / out of scope**;
    - **the target environment** (env, context, namespace, subscription / account, workspace);
@@ -36,24 +50,24 @@ You (the main session) are the coordinator: you write the plan, implement and ex
    - **the suggested risk level (L1/L2/L3) and why**;
    - an empty `## Requirement changes` part.
 4. **If any bold item above is missing or vague, run the `grill-me` interview** (load the `grill-me` skill and follow its rules: check facts yourself, ask only for decisions, short rounds, a recommendation per question). Put its Context brief into `00-brief.md`.
-5. Ask the user to confirm the risk level and scope before you continue. For L1 → use the "Short workflow for L1" at the end of this file.
+5. Ask the user to confirm the risk level, the scope and the mode before you continue (L3 → `interactive`). For L1 → use the "Short workflow for L1" at the end of this file.
 6. If the project has a progress file (`00-core` §9), add **one line** for the task under **Open items**: the goal and a link to the task folder. Details stay in the task folder; do not copy them into the progress file.
 
 **Resume a task (`resume <folder>`):**
 
-1. Read `00-brief.md` (the `Status:` line and the requirement changes) and the files that exist. Tell the user which phase the task is in.
+1. Read `00-brief.md` (the `Status:` and `Mode:` lines and the requirement changes) and the files that exist. Tell the user which phase the task is in.
 2. If the task is in Phase 7 or later, find where execution stopped:
 
    ```bash
    python3 <skill base directory>/scripts/plan_status.py status <task folder>
    ```
 
-   It lists the ticked steps and the **first unticked step**: that is where you continue. Old plans without checkboxes are read from `07-execution-log.md`; offer to convert them to the checkbox format.
+   It lists the ticked steps and the **first unticked step**: that is where you continue. For a sliced task it shows the first unticked slice and the first unticked step inside it. Old plans without checkboxes are read from `07-execution-log.md`; offer to convert them to the checkbox format.
 3. **Before you run anything**, check that the live state still matches the last ticked step. Someone may have changed the system since then. Run that step's `Verify` command (read-only), and for L2/L3 also `infra-recon` in quick mode on the components of the next steps.
 4. If anything differs from what the plan and the log expect: **stop**, show the difference, and ask the user. Do not "fix" it yourself.
 5. Then continue from the first unticked step, with the same rules as Phase 7.
 
-After each phase, update the `Status:` line in `00-brief.md`.
+After each phase, update the `Status:` line in `00-brief.md`. In `interactive` mode, stop after each phase with a short summary and wait for the user.
 
 ## Phase 1 — Recon (subagent `infra-recon`)
 
@@ -74,6 +88,7 @@ After each phase, update the `Status:` line in `00-brief.md`.
 3. Every step must have: who runs it, context, blast radius, whether it can be undone, the exact rollback command, the verify command with the expected value, the stop condition.
 4. For L3, also check `references/l3-checklist.md`.
 5. On production, prefer steps with "Executed by: GitOps PR" or "user" over the AI running mutating commands directly.
+6. **Big task?** If it is L3 with several independent components, or the plan would have more than ~10 steps, or some parts can be rolled back on their own: suggest slices. If the user agrees, read `references/slicing.md` and follow it (overview plan + one folder per slice, each slice with its own plan → gate → execute → verify).
 
 | Task type | Skills to load |
 |---|---|
@@ -141,6 +156,8 @@ For each unticked step in the plan, in order:
    ```bash
    python3 <skill base directory>/scripts/plan_status.py tick <task folder> <N> --result "<short result>"
    ```
+
+   For a sliced task, pass the slice folder (`<task folder>/slices/<NN>-<name>`) instead of the task folder.
 
 7. If the result is not what you expected, or a stop condition is hit: **stop right away**, leave the step unticked, tell the user, suggest a rollback or a fix. Do not invent new steps outside the plan. If the plan must change, follow "Requirement changes during the task" below.
 

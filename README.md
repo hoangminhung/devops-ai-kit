@@ -48,7 +48,7 @@ For cloud CLIs (Azure / AWS / GCP), see [docs/en/cloud-readonly.md](docs/en/clou
 - L0/L1 work: prompt as usual; the rules apply automatically.
 - Not sure what to ask for, or Claude lacks context: `/grill-me <topic>`. Claude asks short rounds of questions, each with a recommended answer.
 - Long-running projects: keep a `PROGRESS.md` (template in `templates/`). Claude reads it at the start of each session and updates it after each task, so nothing is lost when a session ends.
-- L2/L3 work: `/infra-task <description>` → recon → research → plan → review → **approval gate** → implement → review → **approval gate** → execute → verify → docs. Resume at any time with `/infra-task resume <task-folder>`.
+- L2/L3 work: `/infra-task <description>` → recon → research → plan → review → **approval gate** → implement → review → **approval gate** → execute → verify → docs. Resume at any time with `/infra-task resume <task-folder>` (continues from the first unticked step). `--mode auto` skips the pauses between paper phases for L1/L2 (gates and mutating commands still wait for you); big tasks can be cut into slices.
 
 ## Layout
 

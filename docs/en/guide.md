@@ -379,6 +379,23 @@ Old plans without checkboxes still work: Claude reads `07-execution-log.md` and 
 
 **Missing information at the start.** If the brief has no clear target environment, success criteria, allowed downtime, scope or rollback expectation, Claude runs a short `grill-me` interview in phase 0 before planning.
 
+**Run mode: `--mode auto | interactive`.**
+
+```
+/infra-task --mode auto Upgrade Grafana 11.x → 12.x on aks-stg-weu
+```
+
+- `interactive` (default): Claude stops after each phase and waits for you.
+- `auto`: Claude runs the paper phases without stopping (recon → research → plan → plan review, then implement → code review, then verify → docs) and asks only when it cannot decide from facts.
+- **Both modes stop at GATE 1, GATE 2 and before every mutating command.** The mode only changes the phases that do not touch the system.
+- **L3 is always interactive.** `auto` is only for L1 / L2, and only when you ask for it. The mode is saved in `00-brief.md`, so `resume` keeps it.
+
+**Big tasks: slices.** For an L3 task with several independent parts, or a plan with more than ~10 steps, Claude suggests cutting it into slices, e.g. monitoring: 01 metrics → 02 logs (Alloy + Loki) → 03 alert routing.
+
+- Each slice is deployed, verified and rolled back on its own, with its own plan, GATE 1, GATE 2 and verify, in `slices/<NN>-<name>/` inside the task folder.
+- If a slice fails, Claude stops there; the next slices do not start, and earlier slices stay as they are.
+- One change record covers the whole task. Details: `references/slicing.md` of the `infra-task` skill.
+
 ### 5.3. Write documentation
 
 The `infra-docs` skill starts by itself when you ask for docs. Example prompts:
