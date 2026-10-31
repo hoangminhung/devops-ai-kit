@@ -1,0 +1,9 @@
+- name: Write the motd for the environment
+  hosts: web
+  gather_facts: false
+  tasks:
+    - name: Write motd file
+      ansible.builtin.copy:
+        dest: "/tmp/shop-infra-motd-{{ env_name }}"
+        content: "shop-infra {{ env_name }}\n"
+        mode: "0644"

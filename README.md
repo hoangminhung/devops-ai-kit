@@ -73,15 +73,17 @@ devops-ai-kit/
 
 Edit files in this repo (not in `~/.claude`), or `git pull`, then run `./install.sh` again. `./uninstall.sh` removes everything the kit added, including its `settings.json` entries. If you did not change `settings.json` after install, you get the original file back byte for byte.
 
-## Development checks
+## Contributing / Testing the kit
 
 ```bash
 python3 scripts/validate.py                  # frontmatter, names, paths, lengths, references, leftover Vietnamese
 python3 -m unittest discover -s tests -v     # hook + installer tests (temp HOME)
-shellcheck -S warning *.sh scripts/*.sh setup/k8s/*.sh
+shellcheck -S warning *.sh scripts/*.sh setup/k8s/*.sh sandbox/*.sh scenarios/*.sh
 ```
 
 CI (`.github/workflows/ci.yml`) runs the same checks once on every pull request to `main`. `main` is protected: the merge button stays disabled until CI passes.
+
+Unit tests check the scripts; **scenarios** check the kit's behaviour in a real Claude Code session (does it stop at L2, refuse to read a Secret, resume from the right step…). They run against a sample infrastructure repo, [`sandbox/repo/`](sandbox/README.md), which needs no cloud and no cluster; four scenarios also use an optional kind cluster (`sandbox/up.sh`). See [`scenarios/README.md`](scenarios/README.md). Headless runs (`scenarios/run-headless.sh`) cost tokens and are not part of CI.
 
 ## How this differs from other kits
 

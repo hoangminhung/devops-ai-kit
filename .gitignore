@@ -13,3 +13,8 @@ kubeconfig*
 *.kubeconfig
 *.tfstate*
 .env*
+
+# Sandbox and scenario runs
+sandbox/.kubeconfig
+sandbox/.ai-kubeconfig*
+scenarios/.runs/

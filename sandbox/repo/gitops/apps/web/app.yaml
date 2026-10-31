@@ -1,0 +1,18 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: web-prod
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://example.com/shop-infra.git
+    targetRevision: main
+    path: charts/web
+    helm:
+      valueFiles: [values.yaml, values-prod.yaml]
+  destination:
+    name: sandbox-prod
+    namespace: shop
+  syncPolicy:
+    automated: { prune: false, selfHeal: true }
