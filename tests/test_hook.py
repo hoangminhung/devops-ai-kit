@@ -110,6 +110,84 @@ class ReadOnlyCommands(HookTestCase):
                 self.assertEqual(self.decision(command), (None, None))
 
 
+class ForbiddenCommands(HookTestCase):
+    """The settings deny rules match from the start of the command; the hook must deny in any flag order."""
+
+    FORBIDDEN = [
+        "kubectl --context prod-x get secret db -o yaml",
+        "kubectl -n shop --context x get secrets -ojson",
+        "kubectl get secret/db --output=jsonpath={.data.password}",
+        "kubectl -o yaml get secret db",
+        "kubectl get secret db --template={{.data.password}}",
+        "kubectl --context x delete ns shop",
+        "kubectl delete namespace/shop",
+        "kubectl -n shop delete pvc,pod data",
+        "kubectl --context x delete crd widgets.example.com",
+        "oc --context x delete pv pv-1",
+        "helm --kube-context x uninstall web",
+        "helm -n monitoring delete mon",
+        "terraform -chdir=envs/prod destroy",
+        "tofu apply -destroy",
+        "az --subscription s keyvault secret show --vault-name v -n db",
+        "aws --profile p secretsmanager get-secret-value --secret-id db",
+        "gcloud --project p secrets versions access latest --secret db",
+        "bash -c 'kubectl --context x delete pvc data'",
+        "kubectl get pods && kubectl --context x delete ns shop",
+    ]
+    ALLOWED = [
+        "kubectl get secret -o name",
+        "kubectl --context x get secrets -o wide",
+        "kubectl get secretstores -o yaml",
+        "kubectl --context x describe secret db",
+        "terraform -chdir=envs/prod plan -destroy",
+    ]
+
+    def test_denied_in_any_flag_order(self):
+        for command in self.FORBIDDEN:
+            with self.subTest(command=command):
+                decision, reason = self.decision(command)
+                self.assertEqual(decision, "deny")
+                self.assertIn("devops-ai-kit: blocked:", reason)
+
+    def test_secret_names_and_destroy_plans_are_not_denied(self):
+        for command in self.ALLOWED:
+            with self.subTest(command=command):
+                self.assertNotEqual(self.decision(command)[0], "deny")
+
+    def test_secret_deny_points_to_describe(self):
+        self.assertIn("kubectl describe secret", self.decision("kubectl get secret db -o yaml")[1])
+
+    def test_every_settings_deny_rule_is_denied_with_a_flag_first(self):
+        settings = json.loads((KIT_DIR / "claude" / "settings.devops-kit.json").read_text(encoding="utf-8"))
+        flags = {"kubectl": "--context prod-x", "helm": "--kube-context prod-x", "terraform": "-chdir=envs/prod",
+                 "tofu": "-chdir=envs/prod", "az": "--subscription s", "aws": "--profile p", "gcloud": "--project p"}
+        for rule in settings["permissions"]["deny"]:
+            if not rule.startswith("Bash(") or rule.startswith(("Bash(rm ", "Bash(git ")):
+                continue
+            tool, _, rest = rule[5:-1].partition(" ")
+            if rest.startswith(("* ", "-chdir=")):
+                continue  # flag-first twin of another rule
+            command = f"{tool} {flags[tool]} " + " ".join(rest.replace("*", " x ").split())
+            with self.subTest(rule=rule, command=command):
+                self.assertEqual(self.decision(command)[0], "deny")
+
+
+class MakeTargets(HookTestCase):
+    def test_mutating_target_shows_variables_and_production(self):
+        decision, reason = self.decision("make apply e=prod")
+        self.assertEqual(decision, "ask")
+        self.assertIn("make apply e=prod", reason)
+        self.assertIn("PRODUCTION", reason)
+
+    def test_directory_flag(self):
+        self.assertIn("terraform", self.decision("make -C terraform deploy-dev")[1])
+
+    def test_read_only_targets_and_dry_run_pass(self):
+        for command in ("make plan e=prod", "make -n apply", "make lint test", "make --dry-run deploy"):
+            with self.subTest(command=command):
+                self.assertEqual(self.decision(command), (None, None))
+
+
 class MutatingCommands(HookTestCase):
     def assert_ask(self, command, *expected, **kwargs):
         decision, reason = self.decision(command, **kwargs)
@@ -148,13 +226,13 @@ class MutatingCommands(HookTestCase):
     def test_helm(self):
         self.assert_ask("helm upgrade --install mon prometheus-community/kube-prometheus-stack -n monitoring",
                         "helm upgrade mon", "namespace=monitoring")
-        self.assert_ask("helm uninstall web --kube-context kind-dev", "context=kind-dev")
+        self.assert_ask("helm rollback web 2 --kube-context kind-dev", "context=kind-dev")
 
     def test_terraform_and_tofu(self):
         self.assert_ask("terraform apply tfplan", "terraform apply", "workspace=default")
         self.assert_ask("terraform apply -auto-approve", "[auto-approve]")
         self.assert_ask("terraform state rm module.db", "state rm")
-        self.assert_ask("terraform -chdir=envs/prod destroy", "destroy", "envs")
+        self.assert_ask("terraform -chdir=envs/prod apply", "apply", "envs")
         self.assert_ask("tofu import aws_s3_bucket.b my-bucket", "tofu import")
 
     def test_terraform_workspace_from_env(self):
@@ -188,7 +266,7 @@ class MutatingCommands(HookTestCase):
         self.assertIn("***@", reason)
 
     def test_bash_dash_c_is_unwrapped(self):
-        self.assert_ask("bash -c 'kubectl delete ns tmp'", "kubectl delete ns")
+        self.assert_ask("bash -c 'kubectl delete pod tmp'", "kubectl delete pod")
         self.assert_ask("sh -c \"helm rollback web 3\"", "helm rollback web")
 
     def test_wrappers_and_env_assignments(self):

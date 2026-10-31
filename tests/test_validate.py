@@ -47,6 +47,19 @@ class TemplateCopies(unittest.TestCase):
         self.assertEqual(validate.template_copy_errors(KIT_DIR), [])
 
 
+class FlagFirstRules(unittest.TestCase):
+    def test_twin_of_each_tool_rule(self):
+        self.assertEqual(validate.flag_first_twin("Bash(kubectl get *)"), "Bash(kubectl * get *)")
+        self.assertEqual(validate.flag_first_twin("Bash(helm uninstall*)"), "Bash(helm * uninstall*)")
+        self.assertEqual(validate.flag_first_twin("Bash(terraform plan*)"), "Bash(terraform -chdir=* plan*)")
+        self.assertIsNone(validate.flag_first_twin("Bash(kubectl * get *)"))
+        self.assertIsNone(validate.flag_first_twin("Bash(git status*)"))
+
+    def test_missing_twin_is_reported(self):
+        permissions = {"deny": ["Bash(kubectl delete ns *)"], "allow": ["Bash(kubectl get *)", "Bash(kubectl * get *)"]}
+        self.assertEqual(validate.missing_twins(permissions), ["deny: Bash(kubectl * delete ns *)"])
+
+
 class WholeKit(unittest.TestCase):
     def test_validate_passes_on_this_repo(self):
         result = subprocess.run([sys.executable, str(SCRIPT)], capture_output=True, text=True)

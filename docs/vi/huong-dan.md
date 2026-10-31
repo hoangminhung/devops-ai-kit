@@ -499,7 +499,9 @@ Một phiên chạy lâu sẽ bị nén ngữ cảnh nhiều lần, mỗi lần 
 - **Rules và skills là lời dặn, không phải luật.** Model có thể bỏ sót trong một lượt nào đó; đó là lý do có lớp 4.
 - **Permission rules và hook so khớp theo chuỗi lệnh**, nên lách được: lệnh nằm trong script, `eval`, biến môi trường, alias. Hook không phân tích lệnh nằm trong file script được gọi. Chúng là lưới an toàn cho sai sót vô ý, không phải hàng rào bảo mật. Hàng rào thật là kubeconfig / cloud identity read-only.
 - **Hook fail-open:** lỗi nội bộ thì không chặn gì, để luồng xác nhận bình thường quyết định. Hook không biết namespace của resource được khai báo bên trong file YAML (`metadata.namespace`); nó hiện namespace từ flag hoặc từ context.
-- **Một số pattern deny bắt hơi rộng.** Ví dụ `kubectl get secret*-o*` cũng chặn `kubectl get secretstores -o yaml`. Khi bị chặn oan, chạy lệnh đó trong terminal của bạn.
+- **Cờ đứng trước lệnh con.** Rule permission so khớp chuỗi từ đầu lệnh, nên kit thêm một rule "anh em" cho mỗi rule `kubectl` / `helm` / `terraform` (`kubectl * get *`, `terraform -chdir=* plan*`). Hook phân tích cờ và chặn các lệnh bị cấm (xoá namespace / PVC / CRD, destroy, helm uninstall, đọc giá trị secret) dù cờ đứng ở đâu.
+- **Một số pattern deny bắt hơi rộng.** Ví dụ `kubectl * get secret*-o*` cũng chặn `kubectl --context X get secretstores -o yaml`, và `helm * delete*` chặn cả `helm template … --set delete=…`. Khi bị chặn oan, chạy lệnh đó trong terminal của bạn.
+- **Target của `make`:** hook hỏi lại với target có tên giống thay đổi (`apply`, `deploy`, `destroy`, …) và hiện các biến, nhưng không thấy được lệnh bên trong Makefile.
 - **Skill tự kích hoạt dựa trên mô tả**, nên không phải lúc nào cũng trúng. Muốn chắc chắn thì gọi tên (`/infra-docs`, "dùng playbook-pg-migration").
 - **Playbook và standards không thay tài liệu chính thức.** Chúng nêu những thứ không được quên; chi tiết theo version luôn phải được researcher xác nhận.
 - **Subagent tốn thêm token và thời gian.** Đó là lý do có phân cấp L0–L3: đừng chạy `/infra-task` cho việc L1.

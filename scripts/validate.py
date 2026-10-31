@@ -145,12 +145,37 @@ def check_agents():
             error(path, "missing description")
 
 
+# Permission rules match command text from the start, so a flag before the verb
+# (`kubectl --context X get`, `terraform -chdir=X plan`) needs its own rule.
+FLAG_FIRST = {"kubectl": "kubectl * ", "helm": "helm * ", "terraform": "terraform -chdir=* ", "tofu": "tofu -chdir=* "}
+TOOL_RULE = re.compile(r"Bash\((kubectl|helm|terraform|tofu) (.+)\)")
+
+
+def flag_first_twin(rule):
+    """`Bash(kubectl get *)` → `Bash(kubectl * get *)`; None for other rules and for twins."""
+    match = TOOL_RULE.fullmatch(rule)
+    if not match or match.group(2).startswith(("* ", "-chdir=")):
+        return None
+    return f"Bash({FLAG_FIRST[match.group(1)]}{match.group(2)})"
+
+
+def missing_twins(permissions):
+    missing = []
+    for kind in ("deny", "ask", "allow"):
+        rules = permissions.get(kind, [])
+        missing += [f"{kind}: {twin}" for twin in map(flag_first_twin, rules) if twin and twin not in rules]
+    return missing
+
+
 def check_settings():
     path = CLAUDE / "settings.devops-kit.json"
     try:
-        json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         error(path, f"not valid JSON: {exc}")
+        return
+    for rule in missing_twins(data.get("permissions", {})):
+        error(path, f"missing flag-first rule {rule}")
 
 
 def check_english_only():
