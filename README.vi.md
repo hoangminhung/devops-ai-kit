@@ -48,7 +48,7 @@ Với CLI của cloud (Azure / AWS / GCP), xem [docs/vi/cloud-readonly.md](docs/
 - Việc L0/L1: prompt như bình thường; rules tự áp dụng.
 - Chưa rõ nên yêu cầu gì, hoặc Claude thiếu ngữ cảnh: `/grill-me <chủ đề>`. Claude hỏi từng vòng ngắn, câu nào cũng kèm đáp án đề xuất.
 - Project chạy lâu: giữ một file `PROGRESS.md` (mẫu trong `templates/`). Claude đọc nó đầu mỗi phiên và cập nhật sau mỗi việc, nên hết phiên cũng không mất gì.
-- Việc L2/L3: `/infra-task <mô tả>` → recon → research → plan → review → **cổng duyệt** → implement → review → **cổng duyệt** → execute → verify → docs. Làm tiếp bất cứ lúc nào bằng `/infra-task resume <thư-mục-task>`.
+- Việc L2/L3: `/infra-task <mô tả>` → recon → research → plan → review → **cổng duyệt** → implement → review → **cổng duyệt** → execute → verify → docs. Làm tiếp bất cứ lúc nào bằng `/infra-task resume <thư-mục-task>` (tiếp tục từ bước đầu tiên chưa đánh dấu). `--mode auto` bỏ các lần dừng giữa các phase giấy tờ cho L1/L2 (cổng duyệt và lệnh mutating vẫn chờ bạn); task lớn có thể chia lát.
 
 ## Cấu trúc thư mục
 

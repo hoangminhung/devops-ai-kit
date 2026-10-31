@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `/infra-task --mode auto|interactive`: `auto` runs the paper phases (recon → plan review, implement → code review, verify → docs) without pausing; `interactive` (default) stops after each phase. In both modes GATE 1, GATE 2 and every mutating command wait for the user. L3 is always interactive. The mode is saved in `00-brief.md`.
+- `/infra-task` slices: big tasks (L3 with independent parts, or > ~10 steps) can be cut into slices, each with its own plan → gate → execute → verify in `slices/<NN>-<name>/`; a failed slice stops the later ones. New `references/slicing.md`; `plan_status.py` reads slices and `tick --slice` refuses while a slice step is open.
+- Tests guard the safety statements in the skill text (`tests/test_skill_contracts.py`).
 - `/infra-task`: the workflow stages are now called **Phase 0–10** (they were "Step 0–10", easy to mix up with the plan's steps).
 - `/infra-task`: plan steps are checkboxes (`- [ ] Step N: …`); a step is ticked only after its verify passes. `resume` continues from the first unticked step and first checks that the live state still matches the last ticked step. New `scripts/plan_status.py` (`status`, `tick`); old plans without checkboxes are read from `07-execution-log.md`.
 - `/infra-task`: "Requirement changes during the task" — ticked steps are never edited, new steps get a letter (`Step 3b`), `infra-reviewer` re-reviews only the changed steps, and the user confirms before execution continues.

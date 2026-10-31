@@ -379,6 +379,23 @@ Plan cũ không có checkbox vẫn dùng được: Claude đọc `07-execution-l
 
 **Thiếu thông tin lúc bắt đầu.** Nếu brief chưa rõ môi trường đích, tiêu chí thành công, downtime cho phép, phạm vi hoặc kỳ vọng rollback, Claude chạy vài vòng hỏi kiểu `grill-me` ở phase 0 trước khi lập plan.
 
+**Chế độ chạy: `--mode auto | interactive`.**
+
+```
+/infra-task --mode auto Nâng Grafana 11.x → 12.x trên aks-stg-weu
+```
+
+- `interactive` (mặc định): Claude dừng sau mỗi phase và chờ bạn.
+- `auto`: Claude chạy liền các phase "giấy tờ" (recon → research → plan → plan review, rồi implement → code review, rồi verify → docs) và chỉ hỏi khi không tự quyết được từ dữ kiện.
+- **Cả hai chế độ đều dừng ở GATE 1, GATE 2 và trước mọi lệnh mutating.** Chế độ chỉ ảnh hưởng tới các phase không chạm vào hệ thống.
+- **L3 luôn chạy interactive.** `auto` chỉ dành cho L1 / L2, và chỉ khi bạn yêu cầu. Chế độ được lưu trong `00-brief.md`, nên `resume` giữ nguyên.
+
+**Task lớn: chia lát (slice).** Với task L3 có nhiều phần độc lập, hoặc plan dài hơn ~10 bước, Claude đề xuất chia lát, ví dụ monitoring: 01 metrics → 02 logs (Alloy + Loki) → 03 alert routing.
+
+- Mỗi lát được triển khai, verify và rollback riêng, có plan, GATE 1, GATE 2 và verify của riêng nó, trong `slices/<NN>-<tên>/` của thư mục task.
+- Lát nào hỏng thì Claude dừng ở đó; các lát sau không chạy, các lát trước giữ nguyên.
+- Một change record chung cho cả task. Chi tiết: `references/slicing.md` của skill `infra-task`.
+
 ### 5.3. Viết tài liệu
 
 Skill `infra-docs` tự kích hoạt khi bạn nhờ viết tài liệu. Ví dụ prompt:
