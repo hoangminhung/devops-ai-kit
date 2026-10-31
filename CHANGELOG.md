@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Security fix — permission rules and flag order.** The settings rules match command text from the start, so a flag before the verb skipped them: `kubectl --context X get secret … -o yaml` was not denied, `kubectl --context X delete ns` and `terraform -chdir=X destroy` only asked, and read-only `kubectl --context X get` needed approval. Now:
+  - the hook **denies** the forbidden commands (namespace / PV / PVC / CRD deletes, `destroy` and `apply -destroy`, `helm uninstall`, secret values from `kubectl get secret -o …`, Key Vault, Secrets Manager, GCP Secret Manager) in any flag order;
+  - every `kubectl` / `helm` / `terraform` / `tofu` rule has a flag-first twin (`kubectl * get *`, `terraform -chdir=* plan*`); `validate.py` checks that no twin is missing;
+  - `kubectl get secret -o name` and `kubectl get secretstores -o yaml` are no longer blocked by the hook.
+- Hook: `make <target>` with a target like `apply`, `deploy`, `destroy` now asks and shows the target and variables (`make apply e=prod` is marked PRODUCTION). Dry runs (`make -n`) and other targets pass.
 - Sandbox for testing the kit (`sandbox/`): layer 1 is a sample infrastructure repo that needs no cloud or cluster; layer 2 is an optional kind cluster with traps (ingress-nginx, `Delete` StorageClass, fake Secret, `sandbox-prod` and read-only `-ro` contexts) on its own kubeconfig.
 - Scenarios (`scenarios/`): 10 step-by-step behaviour checks, `prepare.sh` for fresh work copies, `run-headless.sh` + `lib.sh` to run and grade single-prompt scenarios with `claude -p` (costs tokens, not in CI). Tests for the format, traps, fixture and helpers.
 - `/infra-task --mode auto|interactive`: `auto` runs the paper phases (recon → plan review, implement → code review, verify → docs) without pausing; `interactive` (default) stops after each phase. In both modes GATE 1, GATE 2 and every mutating command wait for the user. L3 is always interactive. The mode is saved in `00-brief.md`.

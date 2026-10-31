@@ -6,10 +6,17 @@ forces an interactive confirmation whose reason line shows WHERE the command
 will land: kube context + namespace, terraform workspace/backend, Azure
 subscription, AWS profile, GCP project, Ansible inventory/limit, git remote.
 
+It also denies the commands the kit always forbids (namespace / PVC / CRD
+deletes, destroy, helm uninstall, printing secret values). The settings deny
+rules match command text from the start, so `kubectl --context X delete ns Y`
+slips past `Bash(kubectl delete ns *)`; the hook parses the flags and catches
+it in any order.
+
 Design rules:
-  * Never loosens anything. The hook only returns "ask", or "deny" when
-    DEVOPS_KIT_BLOCK_PROD=1 and the target looks like production.
-    Permission deny/ask rules in settings.json still apply regardless.
+  * Never loosens anything. The hook only returns "ask" or "deny" ("deny" for
+    the forbidden commands above, and for production targets when
+    DEVOPS_KIT_BLOCK_PROD=1). Permission deny/ask rules in settings.json still
+    apply regardless.
   * Fails open: on any internal error it prints nothing and exits 0, so the
     normal permission flow decides.
   * Fast: no network calls, only local config lookups with short timeouts.
@@ -102,6 +109,29 @@ GCLOUD_MUTATING = {
 }
 ARGOCD_MUTATING = {"sync", "delete", "set", "rollback", "patch", "create", "rm", "terminate-op", "run"}
 VELERO_MUTATING = {"create", "delete"}
+
+# --- make ------------------------------------------------------------------
+# A target name with one of these words probably changes something (make apply e=prod).
+MAKE_MUTATING = re.compile(
+    r"apply|destroy|deploy|install|upgrade|delete|rollout|rollback|release|sync|migrate|push",
+    re.IGNORECASE,
+)
+MAKE_VALUE_FLAGS = {"-C", "--directory", "-f", "--file", "--makefile", "-I", "--include-dir", "-j", "--jobs", "-o", "-W"}
+MAKE_DRY_RUN = {"-n", "--dry-run", "--just-print", "--recon", "-q", "--question"}
+
+# --- always forbidden (same list as the settings deny rules) ----------------
+KUBECTL_FORBIDDEN_DELETE = {
+    "ns", "namespace", "namespaces", "pvc", "pvcs", "persistentvolumeclaim",
+    "persistentvolumeclaims", "pv", "pvs", "persistentvolume", "persistentvolumes",
+    "crd", "crds", "customresourcedefinition", "customresourcedefinitions",
+}
+SECRET_RESOURCES = {"secret", "secrets"}
+SECRET_SAFE_OUTPUT = {"name", "wide"}  # these show no values
+HELM_REMOVE = {"uninstall", "delete", "del", "un"}
+
+
+class Blocked(Exception):
+    """A command the kit always forbids, whatever the flag order."""
 
 
 def run(cmd, env=None, cwd=None, timeout=3):
@@ -264,6 +294,65 @@ def gcloud_project(flag_project, env):
         return "unknown"
 
 
+# --- forbidden commands ------------------------------------------------------
+
+def resource_types(token):
+    """`ns,pvc` / `secret/db` / `deploy.apps` → {"ns", "pvc"} / {"secret"} / {"deploy"}."""
+    return {part.split("/")[0].split(".")[0].lower() for part in token.split(",") if part}
+
+
+def output_values(args):
+    """Values of -o / --output in any form: `-o yaml`, `-oyaml`, `-o=yaml`, `--output=json`."""
+    values = []
+    for i, tok in enumerate(args):
+        if tok in ("-o", "--output"):
+            values.append(args[i + 1] if i + 1 < len(args) else "")
+        elif tok.startswith("--output="):
+            values.append(tok.split("=", 1)[1])
+        elif tok.startswith("-o") and not tok.startswith("--"):
+            values.append(tok[2:].lstrip("="))
+    return values
+
+
+def subsequence(pos, words):
+    n = len(words)
+    return any(pos[i:i + n] == words for i in range(len(pos) - n + 1))
+
+
+def forbidden(base, args):
+    """Why this command is always denied, or None."""
+    if base in ("kubectl", "oc"):
+        pos, _ = parse_args(args, KUBECTL_VALUE_FLAGS)
+        if len(pos) >= 2 and pos[0] == "delete" and resource_types(pos[1]) & KUBECTL_FORBIDDEN_DELETE:
+            return f"{base} delete {pos[1]} (namespace / PV / PVC / CRD deletes are never run by the AI)"
+        if len(pos) >= 2 and pos[0] == "get" and resource_types(pos[1]) & SECRET_RESOURCES:
+            shows_values = any(v.lower() not in SECRET_SAFE_OUTPUT for v in output_values(args))
+            if shows_values or any(a.startswith("--template") for a in args):
+                return (f"{base} get {pos[1]} with an output format that prints secret values "
+                        "(use `kubectl describe secret <name>` to see key names only)")
+    elif base == "helm":
+        pos, _ = parse_args(args, HELM_VALUE_FLAGS)
+        if pos and pos[0] in HELM_REMOVE:
+            return f"helm {pos[0]} {pos[1] if len(pos) > 1 else ''}".rstrip()
+    elif base in ("terraform", "tofu"):
+        pos = [t for t in args if not t.startswith("-")]
+        if pos and (pos[0] == "destroy" or (pos[0] == "apply" and "-destroy" in args)):
+            return f"{base} {pos[0]}{' -destroy' if pos[0] == 'apply' else ''}"
+    elif base == "az":
+        pos, _ = parse_args(args, {"--subscription", "--vault-name", "-n", "--name", "--id", "-f", "--file", "-o", "--output", "--query"})
+        if subsequence(pos, ["keyvault", "secret", "show"]) or subsequence(pos, ["keyvault", "secret", "download"]):
+            return "az keyvault secret show/download (prints a secret value)"
+    elif base == "aws":
+        pos, _ = parse_args(args, {"--profile", "--region", "--output", "--query", "--secret-id", "--version-id", "--version-stage"})
+        if subsequence(pos, ["secretsmanager", "get-secret-value"]):
+            return "aws secretsmanager get-secret-value (prints a secret value)"
+    elif base == "gcloud":
+        pos, _ = parse_args(args, {"--project", "--secret", "--format", "--out-file"})
+        if subsequence(pos, ["secrets", "versions", "access"]):
+            return "gcloud secrets versions access (prints a secret value)"
+    return None
+
+
 # --- detectors: return (summary, [names used for prod check], readonly_ctx) or None
 
 def kube_summary(ctx, ns, kc_name):
@@ -423,6 +512,32 @@ def detect_git_push(args, cwd):
     return (f"git push{force} → repo={repo} remote={remote} branch={branch} (if this repo is watched by Argo CD/Flux, this deploys)", [branch, repo], False)
 
 
+def detect_make(base, args, cwd):
+    if any(a in MAKE_DRY_RUN for a in args):
+        return None
+    directory, targets, variables = None, [], []
+    i = 0
+    while i < len(args):
+        tok = args[i]
+        if tok in MAKE_VALUE_FLAGS:
+            if tok in ("-C", "--directory") and i + 1 < len(args):
+                directory = args[i + 1]
+            i += 2
+            continue
+        if tok.startswith("--directory="):
+            directory = tok.split("=", 1)[1]
+        elif not tok.startswith("-"):
+            (variables if ENV_ASSIGN.match(tok) else targets).append(tok)
+        i += 1
+    if not any(MAKE_MUTATING.search(t) for t in targets):
+        return None
+    path = os.path.normpath(os.path.join(cwd or os.getcwd(), directory or "."))
+    shown = " ".join(targets + variables)
+    values = [v.split("=", 1)[1] for v in variables]
+    return (f"{base} {shown} → dir={path} (a Makefile target: check the commands it runs and their target)",
+            targets + values + [path], False)
+
+
 def detect_psql(args):
     pos, flags = parse_args(args, {"-h", "--host", "-d", "--dbname", "-U", "--username", "-p", "--port", "-c", "--command", "-f", "--file"})
     uri = next((p for p in pos if p.startswith(("postgres://", "postgresql://"))), None)
@@ -466,6 +581,10 @@ def analyse_segment(segment, cwd, depth=0, exported=None):
             return analyse_command(args[idx + 1], cwd, depth + 1)
         return []
 
+    reason = forbidden(base, args)
+    if reason:
+        raise Blocked(reason)
+
     if base in ("kubectl", "oc"):
         hit = detect_kubectl(base, args, env, cwd)
     elif base == "helm":
@@ -488,6 +607,8 @@ def analyse_segment(segment, cwd, depth=0, exported=None):
         hit = detect_git_push(args, cwd)
     elif base == "psql":
         hit = detect_psql(args)
+    elif base in ("make", "gmake"):
+        hit = detect_make(base, args, cwd)
     else:
         hit = None
     return [hit] if hit else []
@@ -515,7 +636,14 @@ def main():
         # PowerShell escapes with backtick, not backslash: keep Windows paths intact for shlex.
         command = command.replace("\\", "/")
     cwd = payload.get("cwd") or os.getcwd()
-    hits = analyse_command(command, cwd)
+    try:
+        hits = analyse_command(command, cwd)
+    except Blocked as exc:
+        respond("deny", (
+            f"devops-ai-kit: blocked: {exc}. The kit denies this command in any flag order. "
+            "Do not try another way to run it; give the exact command to the user to run."
+        ))
+        return
     if not hits:
         return
 
@@ -539,7 +667,10 @@ def main():
         )
     else:
         decision = "ask"
+    respond(decision, reason)
 
+
+def respond(decision, reason):
     json.dump({
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
