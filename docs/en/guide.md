@@ -516,9 +516,14 @@ A long session is compacted many times, and each time some details can be lost. 
   ```bash
   python3 scripts/validate.py                       # frontmatter, name, paths, length, referenced files, leftover Vietnamese
   python3 -m unittest discover -s tests -v          # hook and installer tests (use a temp HOME, do not touch ~/.claude)
-  shellcheck -S warning *.sh scripts/*.sh setup/k8s/*.sh
+  shellcheck -S warning *.sh scripts/*.sh setup/k8s/*.sh sandbox/*.sh scenarios/*.sh
   ```
 
+- **Test the kit's behaviour** with the scenarios in `scenarios/` (Contributing / Testing the kit):
+  - layer 1, `sandbox/repo/`: a sample infrastructure repo (Terraform with local providers only, Helm, Argo CD manifest, Ansible for localhost); no cloud, no cluster; enough for 6 of the 10 scenarios;
+  - layer 2, optional: `sandbox/up.sh` creates a kind cluster with traps (ingress-nginx, a `Delete` StorageClass, a fake Secret, a `sandbox-prod` context and a read-only `-ro` context), using its own kubeconfig, never `~/.kube/config`;
+  - `scenarios/prepare.sh <NN>` makes a fresh work copy; `scenarios/run-headless.sh` runs the scenarios that have a check block with `claude -p` (costs tokens, not in CI).
+  - Scenarios test the kit **installed** in your Claude config dir: an installed skill wins over a project copy with the same name. To test a branch, install it into a separate `CLAUDE_CONFIG_DIR`.
 - Keep the kit in git, with one clear commit per change. To use it on another server or share it with a team, clone it and run `./install.sh`.
 
 ---

@@ -516,9 +516,14 @@ Một phiên chạy lâu sẽ bị nén ngữ cảnh nhiều lần, mỗi lần 
   ```bash
   python3 scripts/validate.py                       # frontmatter, name, paths, độ dài, file được tham chiếu, còn sót tiếng Việt
   python3 -m unittest discover -s tests -v          # test hook và bộ cài (dùng HOME tạm, không đụng ~/.claude)
-  shellcheck -S warning *.sh scripts/*.sh setup/k8s/*.sh
+  shellcheck -S warning *.sh scripts/*.sh setup/k8s/*.sh sandbox/*.sh scenarios/*.sh
   ```
 
+- **Kiểm thử hành vi của kit** bằng các scenario trong `scenarios/` (Đóng góp / Kiểm thử kit):
+  - lớp 1, `sandbox/repo/`: repo hạ tầng mẫu (Terraform chỉ dùng provider local, Helm, manifest Argo CD, Ansible cho localhost); không cần cloud hay cluster; đủ cho 6/10 scenario;
+  - lớp 2, tùy chọn: `sandbox/up.sh` tạo cluster kind có sẵn các "bẫy" (ingress-nginx, StorageClass `Delete`, Secret giả, context `sandbox-prod` và context read-only `-ro`), dùng kubeconfig riêng, không đụng `~/.kube/config`;
+  - `scenarios/prepare.sh <NN>` tạo bản sao làm việc mới; `scenarios/run-headless.sh` chạy các scenario có khối check bằng `claude -p` (tốn token, không nằm trong CI).
+  - Scenario kiểm thử bản kit **đang cài** trong thư mục cấu hình Claude: skill đã cài được ưu tiên hơn bản cùng tên trong project. Muốn thử một branch thì cài nó vào một `CLAUDE_CONFIG_DIR` riêng.
 - Giữ kit trong git; mỗi thay đổi một commit có message rõ ràng. Đem sang server khác hoặc chia sẻ cho team chỉ cần clone rồi `./install.sh`.
 
 ---

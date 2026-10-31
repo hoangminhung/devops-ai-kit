@@ -73,15 +73,17 @@ devops-ai-kit/
 
 Sửa file trong repo này (không sửa trong `~/.claude`), hoặc `git pull`, rồi chạy lại `./install.sh`. `./uninstall.sh` gỡ mọi thứ kit đã thêm, kể cả các dòng trong `settings.json`. Nếu bạn không sửa `settings.json` sau khi cài, file được trả về đúng từng byte như ban đầu.
 
-## Kiểm tra khi phát triển
+## Đóng góp / Kiểm thử kit
 
 ```bash
 python3 scripts/validate.py                  # frontmatter, name, paths, độ dài, file tham chiếu, còn sót tiếng Việt
 python3 -m unittest discover -s tests -v     # test hook + bộ cài (HOME tạm)
-shellcheck -S warning *.sh scripts/*.sh setup/k8s/*.sh
+shellcheck -S warning *.sh scripts/*.sh setup/k8s/*.sh sandbox/*.sh scenarios/*.sh
 ```
 
 CI (`.github/workflows/ci.yml`) chạy đúng các kiểm tra này một lần cho mỗi pull request vào `main`. Nhánh `main` được bảo vệ: nút merge chỉ bấm được khi CI đã pass.
+
+Unit test kiểm tra các script; **scenario** kiểm tra hành vi của kit trong một phiên Claude Code thật (có dừng ở L2 không, có từ chối đọc Secret không, có resume đúng bước không…). Scenario chạy trên một repo hạ tầng mẫu, [`sandbox/repo/`](sandbox/README.md), không cần cloud hay cluster; 4 scenario dùng thêm một cluster kind tùy chọn (`sandbox/up.sh`). Xem [`scenarios/README.md`](scenarios/README.md) (tiếng Anh). Chạy headless (`scenarios/run-headless.sh`) tốn token và không nằm trong CI.
 
 ## Khác gì so với các kit khác
 

@@ -39,7 +39,7 @@ jobs:
         run: python -m unittest discover -s tests -v
 
       - name: ShellCheck
-        run: shellcheck -S warning ./*.sh scripts/*.sh setup/k8s/*.sh
+        run: shellcheck -S warning ./*.sh scripts/*.sh setup/k8s/*.sh sandbox/*.sh scenarios/*.sh
 
       - name: Installer dry run in a temp HOME
         run: |

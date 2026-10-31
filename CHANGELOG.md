@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Sandbox for testing the kit (`sandbox/`): layer 1 is a sample infrastructure repo that needs no cloud or cluster; layer 2 is an optional kind cluster with traps (ingress-nginx, `Delete` StorageClass, fake Secret, `sandbox-prod` and read-only `-ro` contexts) on its own kubeconfig.
+- Scenarios (`scenarios/`): 10 step-by-step behaviour checks, `prepare.sh` for fresh work copies, `run-headless.sh` + `lib.sh` to run and grade single-prompt scenarios with `claude -p` (costs tokens, not in CI). Tests for the format, traps, fixture and helpers.
 - `/infra-task --mode auto|interactive`: `auto` runs the paper phases (recon → plan review, implement → code review, verify → docs) without pausing; `interactive` (default) stops after each phase. In both modes GATE 1, GATE 2 and every mutating command wait for the user. L3 is always interactive. The mode is saved in `00-brief.md`.
 - `/infra-task` slices: big tasks (L3 with independent parts, or > ~10 steps) can be cut into slices, each with its own plan → gate → execute → verify in `slices/<NN>-<name>/`; a failed slice stops the later ones. New `references/slicing.md`; `plan_status.py` reads slices and `tick --slice` refuses while a slice step is open.
 - Tests guard the safety statements in the skill text (`tests/test_skill_contracts.py`).
