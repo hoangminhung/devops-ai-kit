@@ -70,8 +70,8 @@ Chat history is lost when the context is compacted or a new session starts. Keep
 | What | Where |
 |---|---|
 | Stable project facts: environments, conventions, standing rules | the project's `CLAUDE.md` |
-| Current state, open items, recent decisions | the progress file: `PROGRESS.md` at the workspace root, or the path the project's CLAUDE.md names |
-| One L2/L3 change | its task folder (`/infra-task`) |
+| Goals, overall state, open items, decisions; one line per task with a link | the progress file: `PROGRESS.md` at the workspace root, or the path the project's CLAUDE.md names |
+| The details of one L2/L3 change (plan, steps, log, verification) | its task folder (`/infra-task`); not copied into the progress file |
 | Knowledge that lasts | `infra-docs`: runbook, concept note, ADR |
 
 - At the start of a session in a project: if the progress file exists, read it and tell the user in 1–3 lines where things stand.

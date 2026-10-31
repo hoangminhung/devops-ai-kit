@@ -361,6 +361,24 @@ Claude đi qua các pha sau; mỗi pha để lại một file trong `docs/change
 /infra-task resume docs/changes/2026-10-28-loki-alloy
 ```
 
+**Resume hoạt động thế nào.** Mỗi bước trong `03-plan.md` là một checkbox: `- [ ] Step 3: …`. Ở phase 7, Claude chỉ đánh dấu một bước khi verify của bước đó đạt (`- [x] Step 3: … — ✅ <giờ> UTC · <kết quả>`). Khi resume, Claude:
+
+1. tìm bước đầu tiên chưa đánh dấu (`scripts/plan_status.py status`);
+2. **kiểm tra trạng thái thật trước**: chạy lệnh verify của bước đã xong gần nhất (read-only, cộng `infra-recon` nhanh với L2/L3), vì có thể ai đó đã thay đổi hệ thống trong lúc dừng;
+3. thấy lệch thì dừng và hỏi bạn; không lệch thì làm tiếp từ bước đó.
+
+Plan cũ không có checkbox vẫn dùng được: Claude đọc `07-execution-log.md` và đề nghị chuyển sang định dạng mới.
+
+**Bạn đổi yêu cầu giữa chừng.** Cứ nói với Claude. Claude dừng trước lệnh tiếp theo và:
+
+- ghi thay đổi vào `00-brief.md`;
+- chỉ sửa **các bước chưa chạy** (bước đã đánh dấu giữ nguyên làm lịch sử; bước mới thêm chữ cái, ví dụ `Step 3b`; không đánh số lại);
+- nhờ `infra-reviewer` review lại riêng các bước đã sửa;
+- thêm một dòng vào "Changes during execution" của plan;
+- chờ bạn đồng ý rồi mới chạy tiếp.
+
+**Thiếu thông tin lúc bắt đầu.** Nếu brief chưa rõ môi trường đích, tiêu chí thành công, downtime cho phép, phạm vi hoặc kỳ vọng rollback, Claude chạy vài vòng hỏi kiểu `grill-me` ở phase 0 trước khi lập plan.
+
 ### 5.3. Viết tài liệu
 
 Skill `infra-docs` tự kích hoạt khi bạn nhờ viết tài liệu. Ví dụ prompt:
@@ -402,8 +420,8 @@ Một phiên chạy lâu sẽ bị nén ngữ cảnh nhiều lần, mỗi lần 
 | Cái gì | Ở đâu |
 |---|---|
 | Thông tin ổn định: môi trường, quy ước, **Standing rules** | `CLAUDE.md` của project |
-| Trạng thái hiện tại, việc còn treo, quyết định | `PROGRESS.md` |
-| Một thay đổi L2/L3 | thư mục task (`/infra-task`) |
+| Mục tiêu, trạng thái tổng, việc còn treo, quyết định, **mỗi task một dòng kèm link** | `PROGRESS.md` |
+| Toàn bộ chi tiết của một thay đổi L2/L3 (plan, các bước, log, verify) | thư mục task (`/infra-task`), không chép sang `PROGRESS.md` |
 | Kiến thức dùng lâu dài | runbook, concept note, ADR (`infra-docs`) |
 
 - Đầu mỗi phiên, Claude đọc `PROGRESS.md`; xong mỗi việc hoặc mỗi quyết định quan trọng thì cập nhật.

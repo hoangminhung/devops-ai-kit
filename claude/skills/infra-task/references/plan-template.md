@@ -36,16 +36,21 @@ flowchart LR
 
 ## 5. Steps
 
-### Step 1: <short name>
-- **Executed by:** AI | user | GitOps PR
-- **Context / namespace:**
-- **Action:** <exact command or change>
-- **Blast radius:**
-- **Reversible?:** yes / no / partly — <why>
-- **Rollback:** <exact command>
-- **Verify:** `<command>` → expected `<value>`
-- **Stop condition:** <when to stop and not do the next step>
-- **Estimated time / downtime:**
+<!-- One checkbox line per step, with its details indented below it.
+     In Phase 7, tick a step only after its verify passes, with scripts/plan_status.py tick, which writes:
+       - [x] Step 2: <short name> — ✅ <YYYY-MM-DD HH:MM> UTC · <short result>
+     Never renumber steps. A step added later gets a letter (Step 3b). Ticked steps are history: do not edit them. -->
+
+- [ ] Step 1: <short name>
+  - **Executed by:** AI | user | GitOps PR
+  - **Context / namespace:**
+  - **Action:** <exact command or change>
+  - **Blast radius:**
+  - **Reversible?:** yes / no / partly — <why>
+  - **Rollback:** <exact command>
+  - **Verify:** `<command>` → expected `<value>`
+  - **Stop condition:** <when to stop and not do the next step>
+  - **Estimated time / downtime:**
 
 <repeat for each step>
 
@@ -78,4 +83,7 @@ flowchart LR
 
 ## Changes during execution
 
-<Every change from the approved plan: time · what changed · reason · when the user confirmed>
+<!-- Every change after GATE 1, newest last. Ticked steps are never edited. -->
+
+| Time (UTC) | Change | Reason | Steps affected | Re-reviewed | Confirmed by user |
+|---|---|---|---|---|---|
