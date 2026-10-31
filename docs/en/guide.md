@@ -361,6 +361,24 @@ Claude goes through these phases; each phase leaves a file in `docs/changes/<dat
 /infra-task resume docs/changes/2026-10-28-loki-alloy
 ```
 
+**How resume works.** Each step in `03-plan.md` is a checkbox: `- [ ] Step 3: …`. In phase 7 Claude ticks a step only after its verify passes (`- [x] Step 3: … — ✅ <time> UTC · <result>`). On resume, Claude:
+
+1. finds the first unticked step (`scripts/plan_status.py status`);
+2. **checks the live state first**: it runs the verify command of the last ticked step (read-only, plus a quick `infra-recon` for L2/L3), because someone may have changed the system in between;
+3. stops and asks you if anything differs; otherwise it continues from that step.
+
+Old plans without checkboxes still work: Claude reads `07-execution-log.md` and offers to convert the plan.
+
+**You change the request halfway.** Tell Claude the change. It stops before the next command and:
+
+- writes the change in `00-brief.md`;
+- edits **only steps that have not run yet** (ticked steps stay as history; new steps get a letter, e.g. `Step 3b`; nothing is renumbered);
+- asks `infra-reviewer` to review only the changed steps;
+- adds a row to "Changes during execution" in the plan;
+- waits for your OK before it runs anything.
+
+**Missing information at the start.** If the brief has no clear target environment, success criteria, allowed downtime, scope or rollback expectation, Claude runs a short `grill-me` interview in phase 0 before planning.
+
 ### 5.3. Write documentation
 
 The `infra-docs` skill starts by itself when you ask for docs. Example prompts:
@@ -402,8 +420,8 @@ A long session is compacted many times, and each time some details can be lost. 
 | What | Where |
 |---|---|
 | Stable facts: environments, conventions, **Standing rules** | project `CLAUDE.md` |
-| Current state, open items, decisions | `PROGRESS.md` |
-| One L2/L3 change | its task folder (`/infra-task`) |
+| Goals, overall state, open items, decisions, **one line per task with a link** | `PROGRESS.md` |
+| All the details of one L2/L3 change (plan, steps, log, verification) | its task folder (`/infra-task`), never copied into `PROGRESS.md` |
 | Knowledge that lasts | runbook, concept note, ADR (`infra-docs`) |
 
 - Claude reads `PROGRESS.md` at the start of a session and updates it after each task or important decision.

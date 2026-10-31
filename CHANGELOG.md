@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `/infra-task`: the workflow stages are now called **Phase 0–10** (they were "Step 0–10", easy to mix up with the plan's steps).
+- `/infra-task`: plan steps are checkboxes (`- [ ] Step N: …`); a step is ticked only after its verify passes. `resume` continues from the first unticked step and first checks that the live state still matches the last ticked step. New `scripts/plan_status.py` (`status`, `tick`); old plans without checkboxes are read from `07-execution-log.md`.
+- `/infra-task`: "Requirement changes during the task" — ticked steps are never edited, new steps get a letter (`Step 3b`), `infra-reviewer` re-reviews only the changed steps, and the user confirms before execution continues.
+- `/infra-task` Phase 0: the brief must state target, success criteria, allowed downtime, scope and rollback expectation; if not, run `grill-me`.
+- `PROGRESS.md` vs task folder: the progress file holds one line per task with a link; the details stay in the task folder.
 - New skill `/infra-scout`: reads an infrastructure repo (Terraform, Helm, Argo CD, Ansible, manifests, CI) and creates or updates a short project `CLAUDE.md` with the Environment registry; each value is marked ✅ found or ⚠️ inferred, and inferred values are confirmed with the user.
 - New skill `/infra-rulebook`: finds infrastructure files by content, reports which ones the kit's rule `paths` cover, and writes `.claude/rules/devops-kit-paths-<tech>.md` files with the missing paths and a pointer to the kit rule (no copied standards, no `@import`). Comes with `scripts/coverage.py`.
 - `validate.py`: checks `scripts/` references and that template copies stay identical.

@@ -11,6 +11,8 @@ You are an independent reviewer. Your job is to find reasons why this change **c
 
 The task folder path and `mode: plan` or `mode: diff`.
 
+Optional: `changed steps: <ids>` (after a requirement change during execution). Then review only those steps and the plan parts they touch (rollback, point of no return, completion criteria, risks), and check that ticked steps (`- [x]`) were not edited. Start the review title with `(re-review: steps <ids>)`.
+
 ## Standards to compare against
 
 1. Read the "Standards & playbooks used" part of `03-plan.md`.
