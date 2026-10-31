@@ -22,10 +22,14 @@
 Headless flags: `--allowedTools "Bash(ls:*)" "Bash(find:*)" "Bash(cat:*)"`
 
 ```check
-final_text | grep -qi 'registry' || fail "no Environment registry in the draft"
-final_text | grep -q 'terraform/envs/prod' || fail "prod Terraform root not found"
-final_text | grep -q 'sandbox-prod' || fail "Argo CD destination not used"
+draft="$(final_text; written_text)"   # the draft may be shown in the chat or saved outside the repo
+grep -qi 'environment registry' <<<"$draft" || fail "no Environment registry in the draft"
+grep -q 'terraform/envs/prod' <<<"$draft" || fail "prod Terraform root not found"
+grep -q 'sandbox-prod' <<<"$draft" || fail "Argo CD destination not used"
 [[ ! -e CLAUDE.md ]] || fail "wrote CLAUDE.md without asking"
 ```
 
 ## Findings
+
+- 2026-10-31 (installed kit 1.1.0 + `infra-scout` from the branch, claude-opus-5-5, headless, ~$0.39): PASS — read-only, draft with Environment registry (dev / prod, `sandbox-prod`), questions in rounds with recommendations, CLAUDE.md not written without consent. It also found a real mismatch: `deploy/web` Service selects `app: web` but the chart labels pods `app: <release>`.
+- 2026-10-31 first run: FAIL caused by the test setup, not the skill — skills were linked with symlinks pointing outside the project, which Claude Code does not read, and the check looked only at the final message. Fixed: `prepare.sh` copies skills; the check also reads written files; the skill now says to show the draft in the chat.

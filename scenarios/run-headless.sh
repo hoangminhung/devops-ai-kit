@@ -13,7 +13,9 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLAUDE_BIN="${CLAUDE_BIN:-$(command -v claude || true)}"
 if [[ -z "$CLAUDE_BIN" ]]; then
-  CLAUDE_BIN="$(find "$HOME/.vscode-server/extensions" "$HOME/.vscode/extensions" -path '*anthropic.claude-code-*/native-binary/claude' 2>/dev/null | sort | tail -1)"
+  # One of these folders usually does not exist: find then fails, which must not stop the script.
+  CLAUDE_BIN="$( { find "$HOME/.vscode-server/extensions" "$HOME/.vscode/extensions" \
+    -path '*anthropic.claude-code-*/native-binary/claude' 2>/dev/null || true; } | sort | tail -1)"
 fi
 [[ -x "$CLAUDE_BIN" ]] || { echo "claude not found: set CLAUDE_BIN" >&2; exit 1; }
 command -v jq >/dev/null || { echo "jq is needed to grade the scenarios" >&2; exit 1; }

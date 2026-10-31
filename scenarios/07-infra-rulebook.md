@@ -27,3 +27,5 @@ final_text | grep -q 'gitops/apps/web' || fail "gitops app not reported"
 ```
 
 ## Findings
+
+- 2026-10-31 (installed kit 1.1.0 + `infra-rulebook` from the branch, claude-opus-5-5, headless, ~$0.35): PASS — ran `coverage.py report`; Terraform / Ansible / Helm covered; `deploy/web/*` (Kubernetes) and `gitops/apps/web/app.yaml` (Argo CD) uncovered; proposed globs and waited for approval; no rule file written.

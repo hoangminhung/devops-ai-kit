@@ -118,7 +118,8 @@ class Prepare(unittest.TestCase):
             self.assertTrue((work / "terraform/envs/prod/main.tf").exists())
             self.assertIn("replicas = 4", (work / "terraform/envs/prod/terraform.tfvars").read_text())
             self.assertTrue((work / "docs/changes/2026-11-01-prod-replicas/03-plan.md").exists())
-            self.assertTrue((work / ".claude/skills/infra-scout").is_symlink())
+            self.assertTrue((work / ".claude/skills/infra-scout/SKILL.md").is_file())
+            self.assertFalse((work / ".claude/skills/infra-scout").is_symlink())
             status = subprocess.run(["git", "status", "--porcelain"], cwd=work, capture_output=True, text=True)
             self.assertEqual(status.stdout.strip(), "?? .claude/")
             self.assertIn("Kit tested: installed vnot installed", result.stderr)
@@ -126,12 +127,37 @@ class Prepare(unittest.TestCase):
             shutil.rmtree(work.parent)
 
 
+class RunHeadless(unittest.TestCase):
+    def test_finds_vscode_claude_when_one_extensions_folder_is_missing(self):
+        with tempfile.TemporaryDirectory() as home:
+            binary = Path(home, ".vscode-server/extensions/anthropic.claude-code-9.9.9-linux-x64/resources/native-binary/claude")
+            binary.parent.mkdir(parents=True)
+            binary.write_text("#!/bin/sh\nexit 0\n")
+            binary.chmod(0o755)
+            env = {k: v for k, v in os.environ.items() if k != "CLAUDE_BIN"}
+            env.update(HOME=home, PATH="/usr/bin:/bin")  # no `claude` on PATH, no ~/.vscode/extensions
+            result = subprocess.run([str(SCENARIOS / "run-headless.sh"), "04"], env=env,
+                                    capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("04 SKIP (manual only)", result.stdout)
+
+    def test_clear_error_when_claude_is_missing(self):
+        with tempfile.TemporaryDirectory() as home:
+            env = {k: v for k, v in os.environ.items() if k != "CLAUDE_BIN"}
+            env.update(HOME=home, PATH="/usr/bin:/bin")
+            result = subprocess.run([str(SCENARIOS / "run-headless.sh"), "05"], env=env,
+                                    capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("claude not found", result.stderr)
+
+
 class Lib(unittest.TestCase):
     EVENTS = [
         {"type": "assistant", "message": {"content": [
             {"type": "tool_use", "name": "Bash", "input": {"command": "python3 x/plan_status.py status t"}},
             {"type": "tool_use", "name": "Skill", "input": {"skill": "infra-docs"}},
-            {"type": "tool_use", "name": "Agent", "input": {"subagent_type": "infra-reviewer"}}]}},
+            {"type": "tool_use", "name": "Agent", "input": {"subagent_type": "infra-reviewer"}},
+            {"type": "tool_use", "name": "Write", "input": {"file_path": "/tmp/d.md", "content": "## Environment registry"}}]}},
         {"type": "result", "result": "Stopped at GATE 1.",
          "permission_denials": [{"tool_name": "Bash", "tool_input": {"command": "make apply e=prod"}}]},
     ]
@@ -154,6 +180,7 @@ class Lib(unittest.TestCase):
         self.assertEqual(self.run_lib("skills_used"), "infra-docs")
         self.assertEqual(self.run_lib("agents_used"), "infra-reviewer")
         self.assertEqual(self.run_lib("final_text"), "Stopped at GATE 1.")
+        self.assertEqual(self.run_lib("written_text"), "## Environment registry")
         self.assertIn("make apply e=prod", self.run_lib("denied_tools"))
 
 

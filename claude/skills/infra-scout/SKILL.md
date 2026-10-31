@@ -40,5 +40,5 @@ The project's CLAUDE.md is what every later session reads first (`00-core` §9).
 6. **Update mode** (CLAUDE.md already exists):
    - Keep everything the user wrote. Only add missing sections and update values you found evidence for.
    - Show a unified diff of the change. Never delete or rewrite a line without asking.
-7. **Write** CLAUDE.md after the user agrees. If there is no progress file, offer to create `PROGRESS.md` from `templates/PROGRESS.md`.
+7. **Show the full draft in the chat** (or the diff in update mode), then **write** CLAUDE.md after the user agrees. If there is no progress file, offer to create `PROGRESS.md` from `templates/PROGRESS.md`.
 8. **Next step.** Suggest `/infra-rulebook` to make the kit's rules load for every infrastructure file in this repo.

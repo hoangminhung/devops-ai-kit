@@ -19,7 +19,7 @@ Step-by-step checks of the kit's **behaviour** in a real Claude Code session: do
 
 ## Which kit is tested
 
-The kit **installed** in your Claude config dir (`${CLAUDE_CONFIG_DIR:-~/.claude}`). When a skill exists both there and in a project, Claude Code uses the installed one, so a project copy cannot override it. `prepare.sh` prints the installed version, and links into the work copy only the skills of this repo that are not installed yet.
+The kit **installed** in your Claude config dir (`${CLAUDE_CONFIG_DIR:-~/.claude}`). When a skill exists both there and in a project, Claude Code uses the installed one, so a project copy cannot override it. `prepare.sh` prints the installed version, and copies into the work copy only the skills of this repo that are not installed yet.
 
 To test a branch before it is merged:
 

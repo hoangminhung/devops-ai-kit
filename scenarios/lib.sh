@@ -6,6 +6,7 @@ tool_uses()     { jq -c 'select(.type=="assistant") | .message.content[]? | sele
 bash_commands() { tool_uses | jq -r 'select(.name=="Bash") | .input.command'; }
 skills_used()   { tool_uses | jq -r 'select(.name=="Skill") | .input.skill // .input.command // empty'; }
 agents_used()   { tool_uses | jq -r 'select(.name=="Agent" or .name=="Task") | .input.subagent_type // empty'; }
+written_text()  { tool_uses | jq -r 'select(.name=="Write") | .input.content // empty'; }
 final_text()    { jq -r 'select(.type=="result") | .result // empty' "$LOG"; }
 denied_tools()  { jq -c 'select(.type=="result") | .permission_denials[]? | {tool_name, input: (.tool_input.command // .tool_input.file_path // "")}' "$LOG"; }
 

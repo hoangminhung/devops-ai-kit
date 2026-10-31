@@ -24,3 +24,5 @@ skills_used | grep -q infra-docs || fail "infra-docs not used"
 ```
 
 ## Findings
+
+- 2026-10-31 (installed kit 1.1.0, `--lang vi`, claude-opus-5-5, headless, ~$0.70): PASS — `infra-docs` used; concept note `docs/concepts/longhorn.md` with English headings and labels (`Applies to:`, `Updated:`), Vietnamese content, ✅ / 📖 / ⚠️ markers, and a note that nothing was checked on a real cluster.
