@@ -15,7 +15,7 @@ Hướng dẫn đầy đủ: [docs/vi/huong-dan.md](docs/vi/huong-dan.md) · Thu
 | Lớp | Nội dung | Khi nào được nạp |
 |---|---|---|
 | Rules | `00-core` (an toàn, cấp rủi ro L0–L3, bằng chứng, tài liệu), `01-language` (ngôn ngữ đầu ra) + Terraform, Ansible, Kubernetes, Helm, Argo CD, Dockerfile, observability | `00-core` và `01-language` luôn nạp; các rule còn lại nạp qua `paths:` khi đụng tới file khớp |
-| Skills | Quy trình `/infra-task`, `grill-me` (hỏi bạn cho tới khi đủ ngữ cảnh), `infra-docs` (change record, concept note, runbook, ADR, postmortem), 8 skill chuẩn thiết kế, 3 playbook (monitoring stack, migrate PostgreSQL bằng PGO, AKS) | Khi cần (khớp mô tả hoặc gọi bằng lệnh `/`) |
+| Skills | `/infra-scout` + `/infra-rulebook` (onboard repo: CLAUDE.md và độ phủ rule), quy trình `/infra-task`, `grill-me` (hỏi bạn cho tới khi đủ ngữ cảnh), `infra-docs` (change record, concept note, runbook, ADR, postmortem), 8 skill chuẩn thiết kế, 3 playbook (monitoring stack, migrate PostgreSQL bằng PGO, AKS) | Khi cần (khớp mô tả hoặc gọi bằng lệnh `/`) |
 | Subagents | `infra-recon`, `infra-researcher`, `infra-reviewer`, `infra-verifier`, `infra-scribe` | Do `/infra-task` gọi, hoặc khi bạn yêu cầu |
 | Lớp bảo vệ | Permission rules (deny/ask/allow), hook PreToolUse hiện đúng nơi tác động (context, namespace, workspace, subscription) trên mọi lệnh mutating, RBAC read-only + script tạo kubeconfig cho AI | Claude Code / Kubernetes cưỡng chế, không phụ thuộc model |
 
@@ -41,6 +41,8 @@ setup/k8s/make-ai-kubeconfig.sh --apply-rbac --readonly <prod-context> --passthr
 
 Với CLI của cloud (Azure / AWS / GCP), xem [docs/vi/cloud-readonly.md](docs/vi/cloud-readonly.md).
 
+**Mỗi repo một lần:** mở Claude Code trong repo, chạy `/infra-scout` (viết `CLAUDE.md` ngắn có Environment registry) rồi `/infra-rulebook` (để rule của kit nạp cho file nằm ở thư mục không chuẩn). Xem [hướng dẫn mục 4](docs/vi/huong-dan.md#4-thiết-lập-cho-từng-project).
+
 ## Dùng hằng ngày
 
 - Việc L0/L1: prompt như bình thường; rules tự áp dụng.
@@ -56,7 +58,7 @@ devops-ai-kit/
 ├── claude/                  # được cài vào ~/.claude/
 │   ├── rules/devops-kit/    # 00-core + 7 rule theo công nghệ
 │   ├── lang/                # en.md, vi.md → 01-language.md
-│   ├── skills/              # 14 skill
+│   ├── skills/              # 16 skill
 │   ├── agents/              # 5 subagent
 │   ├── hooks/devops-kit/    # infra-context-guard.py
 │   └── settings.devops-kit.json
