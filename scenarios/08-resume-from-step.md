@@ -31,3 +31,5 @@ grep -q '^- \[x\] Step 1: Set replicas to 4 in the prod tfvars — ✅ 2026-11-0
 ```
 
 ## Findings
+
+- 2026-10-31 (installed kit = main @f88bb34 (1.1.0 + PR #5–#7), claude-opus-5-5, headless, ~$0.55): PASS — ran `plan_status.py status`, re-ran Step 1's verify (`grep replicas …` → 4) before anything else, named Step 2 as next, did not apply, did not touch the ticked line. `terraform -chdir=… init` needed approval (allow rules expect `terraform init` first) and Claude stopped without working around it.

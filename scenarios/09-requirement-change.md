@@ -33,3 +33,5 @@ agents_used | grep -q infra-reviewer || fail "no re-review"
 ```
 
 ## Findings
+
+- 2026-10-31 (installed kit = main @f88bb34 (1.1.0 + PR #5–#7), claude-opus-5-5, headless, ~$1.39, 36 turns): PASS — change recorded in `00-brief.md`, ticked Step 1 untouched, new `Step 1b`, row in Changes during execution, `infra-reviewer` re-reviewed the changed steps (2 rounds), stopped for confirmation.

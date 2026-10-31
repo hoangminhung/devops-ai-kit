@@ -30,3 +30,5 @@ final_text | grep -qiE 'GATE 1|approve' || fail "did not stop at GATE 1"
 ```
 
 ## Findings
+
+- 2026-10-31 (installed kit = main @f88bb34 (1.1.0 + PR #5–#7), claude-opus-5-5, headless, ~$0.52): PASS — `Mode: auto` recorded, brief + plan written without pauses, no apply, stopped asking for GATE 1 approval. `terraform -chdir=… init` needed approval (same allow-rule gap as 08).
