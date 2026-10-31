@@ -63,7 +63,7 @@ devops-ai-kit/
 ├── claude/                                # nội dung được cài vào ~/.claude/
 │   ├── rules/devops-kit/                  # 00-core + 7 rule theo công nghệ
 │   ├── lang/                              # en.md, vi.md → cài thành 01-language.md theo --lang
-│   ├── skills/                            # 14 skill
+│   ├── skills/                            # 16 skill
 │   ├── agents/                            # 5 subagent
 │   ├── hooks/devops-kit/                  # infra-context-guard.py
 │   └── settings.devops-kit.json           # permission + hook (được merge, không ghi đè)
@@ -274,27 +274,44 @@ Xem [cloud-readonly.md](cloud-readonly.md). Tóm tắt:
 
 ## 4. Thiết lập cho từng project
 
-```bash
-cd ~/projects/project-A
-cp ~/devops-ai-kit/templates/project-CLAUDE.md ./CLAUDE.md        # rồi điền
-cp ~/devops-ai-kit/templates/PROGRESS.md ./PROGRESS.md            # Claude tự cập nhật
-cat ~/devops-ai-kit/templates/gitignore-additions.txt >> .gitignore
+Chạy 2 skill này một lần cho mỗi repo, trong phiên Claude Code mở ở thư mục repo:
+
+```
+/infra-scout                       # đọc repo, viết CLAUDE.md ngắn (hỏi trước khi ghi)
+/infra-rulebook                    # để rule của kit nạp cho mọi file hạ tầng
 ```
 
-Quan trọng nhất trong `CLAUDE.md` của project là bảng **Environment registry**: env nào ↔ context nào ↔ subscription nào ↔ ai được thay đổi. Rule cốt lõi bắt Claude đối chiếu bảng này trước khi chạm hạ tầng.
+**`/infra-scout`** đọc Terraform (thư mục env, backend, workspace, version), Helm chart, Argo CD Application, Ansible inventory, manifest và CI, rồi soạn `CLAUDE.md` của project theo `templates/project-CLAUDE.md`:
 
-Không dùng `claude init` để sinh CLAUDE.md dài rồi giữ nguyên. Nếu đã có CLAUDE.md, giữ phần riêng của project và xóa những gì đã có trong kit (nguyên tắc an toàn, chuẩn Terraform…), để tổng context nạp mỗi phiên luôn gọn.
+- mỗi giá trị được đánh dấu ✅ (thấy trong repo hoặc cluster) hoặc ⚠️ (suy luận); Claude hỏi bạn xác nhận các mục ⚠️ theo từng vòng ngắn;
+- thêm `--recon <context>` thì nó có thể nhờ agent read-only `infra-recon` kiểm tra cluster thật (hỏi bạn trước);
+- repo đã có CLAUDE.md thì chỉ bổ sung phần còn thiếu và cho bạn xem diff; không bao giờ xóa phần bạn viết khi chưa hỏi;
+- nó đề nghị tạo luôn `PROGRESS.md`.
 
-**Repo có cấu trúc thư mục khác** (ví dụ manifest nằm ở `deploy/`): rule `kubernetes.md` của kit sẽ không tự nạp. Tạo rule cấp project để bổ sung paths:
+Quan trọng nhất trong `CLAUDE.md` là bảng **Environment registry**: env nào ↔ context nào ↔ subscription nào ↔ ai được thay đổi. Rule cốt lõi bắt Claude đối chiếu bảng này trước khi chạm hạ tầng.
+
+**`/infra-rulebook`** xử lý repo có cấu trúc thư mục khác. Rule của kit chỉ nạp cho file khớp `paths` của nó (ví dụ `**/k8s/**`), nên manifest trong `deploy/` hay Argo CD app trong `apps/*/app.yaml` sẽ không có chuẩn nào được áp. Skill này:
+
+1. tìm file hạ tầng **theo nội dung** và cho biết file nào đã được phủ;
+2. đề xuất glob hẹp cho phần còn lại và hỏi bạn;
+3. ghi các file nhỏ `.claude/rules/devops-kit-paths-<tech>.md`, chỉ gồm `paths` và một dòng trỏ tới rule của kit, ví dụ:
 
 ```markdown
-<!-- project-A/.claude/rules/k8s-paths.md -->
 ---
 paths:
-  - "deploy/**/*.yaml"
+  - "deploy/**/*.{yaml,yml}"
 ---
-Files in deploy/ are Kubernetes manifests: apply the standards in ~/.claude/rules/devops-kit/kubernetes.md (read that file before editing).
+
+# devops-ai-kit: Kubernetes files in this repo
+
+The files that match these paths are Kubernetes files. Before you edit them, read `~/.claude/rules/devops-kit/kubernetes.md` and follow it.
 ```
+
+Chuẩn không bao giờ bị chép vào repo: kit là nguồn duy nhất. (Không dùng `@import` file của kit được: Claude Code không nạp import tới file nằm ngoài project.) Hãy commit các file này để cả team cùng dùng.
+
+Muốn làm tay: copy `templates/project-CLAUDE.md` và `templates/PROGRESS.md` vào repo rồi điền, và thêm `templates/gitignore-additions.txt` vào `.gitignore`.
+
+Không dùng `claude init` để sinh CLAUDE.md dài rồi giữ nguyên: chỉ giữ phần riêng của project, để context nạp mỗi phiên luôn gọn.
 
 ---
 

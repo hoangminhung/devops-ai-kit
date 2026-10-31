@@ -30,7 +30,12 @@ VIETNAMESE = re.compile(
 # Files Claude reads or that ship as English-only. docs/ is checked by hand.
 ENGLISH_ONLY_GLOBS = ["claude/**/*", "templates/*", "setup/**/*", "scripts/*", "*.sh", "README.md", "CHANGELOG.md"]
 VIETNAMESE_ALLOWED = {Path("claude/lang/vi.md"), Path("scripts/validate.py")}
-REF_PATTERN = re.compile(r"\b((?:references|templates)/[A-Za-z0-9_.-]+\.md)\b")
+REF_PATTERN = re.compile(r"\b((?:references|templates|scripts)/[A-Za-z0-9_.-]+\.(?:md|py))\b")
+# Templates that ship both in templates/ (for people) and inside a skill (for Claude): must stay identical.
+TEMPLATE_COPIES = [
+    ("templates/project-CLAUDE.md", "claude/skills/infra-scout/templates/project-CLAUDE.md"),
+    ("templates/PROGRESS.md", "claude/skills/infra-scout/templates/PROGRESS.md"),
+]
 SKILL_MENTION = re.compile(r"`([a-z0-9-]+)`")
 
 errors = []
@@ -112,6 +117,22 @@ def check_references(path, body, skill_dir, skill_dirs):
                 error(path, f"referenced file not found: {ref}")
 
 
+def template_copy_errors(kit_dir, pairs=TEMPLATE_COPIES):
+    """Messages for template copies that are missing or differ from the original."""
+    found = []
+    for original, copy in pairs:
+        a, b = kit_dir / original, kit_dir / copy
+        if not a.exists() or not b.exists():
+            found.append(f"{copy}: template copy or original missing ({original})")
+        elif a.read_bytes() != b.read_bytes():
+            found.append(f"{copy}: differs from {original} (copy the original over it)")
+    return found
+
+
+def check_template_copies():
+    errors.extend(template_copy_errors(KIT_DIR))
+
+
 def check_agents():
     for path in sorted((CLAUDE / "agents").glob("*.md")):
         data, _, _ = split_frontmatter(path)
@@ -158,6 +179,7 @@ def main():
     check_rules()
     check_skills()
     check_agents()
+    check_template_copies()
     check_settings()
     check_english_only()
     for message in errors:

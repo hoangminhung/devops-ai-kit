@@ -15,7 +15,7 @@ Full guide: [docs/en/guide.md](docs/en/guide.md) · Terms: [docs/en/glossary.md]
 | Layer | Contents | How it loads |
 |---|---|---|
 | Rules | `00-core` (safety, risk levels L0–L3, evidence, docs), `01-language` (output language) + Terraform, Ansible, Kubernetes, Helm, Argo CD, Dockerfile, observability | `00-core` and `01-language` always; the rest through `paths:` when matching files are touched |
-| Skills | `/infra-task` workflow, `grill-me` (asks you questions until the context is complete), `infra-docs` (change record, concept note, runbook, ADR, postmortem), 8 design-standard skills, 3 playbooks (monitoring stack, PostgreSQL migration with PGO, AKS) | On demand (description match or slash command) |
+| Skills | `/infra-scout` + `/infra-rulebook` (onboard a repo: CLAUDE.md and rule coverage), `/infra-task` workflow, `grill-me` (asks you questions until the context is complete), `infra-docs` (change record, concept note, runbook, ADR, postmortem), 8 design-standard skills, 3 playbooks (monitoring stack, PostgreSQL migration with PGO, AKS) | On demand (description match or slash command) |
 | Subagents | `infra-recon`, `infra-researcher`, `infra-reviewer`, `infra-verifier`, `infra-scribe` | Called by `/infra-task` or on request |
 | Guardrails | Permission rules (deny/ask/allow), a PreToolUse hook that shows the real target (context, namespace, workspace, subscription) on every mutating command, read-only RBAC + kubeconfig generator for the AI | Enforced by Claude Code / Kubernetes, not by the model |
 
@@ -41,6 +41,8 @@ setup/k8s/make-ai-kubeconfig.sh --apply-rbac --readonly <prod-context> --passthr
 
 For cloud CLIs (Azure / AWS / GCP), see [docs/en/cloud-readonly.md](docs/en/cloud-readonly.md).
 
+**Once per repo:** open Claude Code in the repo and run `/infra-scout` (writes a short `CLAUDE.md` with the Environment registry) and then `/infra-rulebook` (makes the kit's rules load for files in non-standard folders). See [guide §4](docs/en/guide.md#4-set-up-each-project).
+
 ## Day-to-day
 
 - L0/L1 work: prompt as usual; the rules apply automatically.
@@ -56,7 +58,7 @@ devops-ai-kit/
 ├── claude/                  # installed into ~/.claude/
 │   ├── rules/devops-kit/    # 00-core + 7 technology rules
 │   ├── lang/                # en.md, vi.md → 01-language.md
-│   ├── skills/              # 14 skills
+│   ├── skills/              # 16 skills
 │   ├── agents/              # 5 subagents
 │   ├── hooks/devops-kit/    # infra-context-guard.py
 │   └── settings.devops-kit.json

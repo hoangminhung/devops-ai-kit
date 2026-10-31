@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- New skill `/infra-scout`: reads an infrastructure repo (Terraform, Helm, Argo CD, Ansible, manifests, CI) and creates or updates a short project `CLAUDE.md` with the Environment registry; each value is marked ✅ found or ⚠️ inferred, and inferred values are confirmed with the user.
+- New skill `/infra-rulebook`: finds infrastructure files by content, reports which ones the kit's rule `paths` cover, and writes `.claude/rules/devops-kit-paths-<tech>.md` files with the missing paths and a pointer to the kit rule (no copied standards, no `@import`). Comes with `scripts/coverage.py`.
+- `validate.py`: checks `scripts/` references and that template copies stay identical.
 - CI: run once per pull request to `main` (plus manual runs); no more duplicate runs on branch pushes, after merge, or on tags. Older runs of the same PR are cancelled.
 
 ## 1.1.0 — 2026-10-28

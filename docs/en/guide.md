@@ -63,7 +63,7 @@ devops-ai-kit/
 ├── claude/                                # content installed into ~/.claude/
 │   ├── rules/devops-kit/                  # 00-core + 7 technology rules
 │   ├── lang/                              # en.md, vi.md → installed as 01-language.md by --lang
-│   ├── skills/                            # 14 skills
+│   ├── skills/                            # 16 skills
 │   ├── agents/                            # 5 subagents
 │   ├── hooks/devops-kit/                  # infra-context-guard.py
 │   └── settings.devops-kit.json           # permissions + hook (merged, not overwritten)
@@ -274,27 +274,44 @@ Add `--env DEVOPS_KIT_BLOCK_PROD=1`. The hook will **deny** (instead of ask) eve
 
 ## 4. Set up each project
 
-```bash
-cd ~/projects/project-A
-cp ~/devops-ai-kit/templates/project-CLAUDE.md ./CLAUDE.md        # then fill it in
-cp ~/devops-ai-kit/templates/PROGRESS.md ./PROGRESS.md            # Claude keeps it up to date
-cat ~/devops-ai-kit/templates/gitignore-additions.txt >> .gitignore
+Run these two skills once per repo, in a Claude Code session opened in the repo:
+
+```
+/infra-scout                       # reads the repo, writes a short CLAUDE.md (asks before writing)
+/infra-rulebook                    # makes the kit's rules load for every infrastructure file
 ```
 
-The most important part of the project's `CLAUDE.md` is the **Environment registry** table: which env ↔ which context ↔ which subscription ↔ who may change it. The core rule makes Claude check this table before it touches infrastructure.
+**`/infra-scout`** reads Terraform (env folders, backends, workspaces, versions), Helm charts, Argo CD Applications, Ansible inventories, manifests and CI, and drafts the project's `CLAUDE.md` from `templates/project-CLAUDE.md`:
 
-Do not use `claude init` to generate a long CLAUDE.md and keep it as is. If you already have a CLAUDE.md, keep the project-specific parts and remove what the kit already covers (safety rules, Terraform standards…), so the context loaded in each session stays small.
+- every value is marked ✅ (found in the repo or cluster) or ⚠️ (inferred); Claude asks you to confirm the ⚠️ ones in short rounds;
+- with `--recon <context>` it can also ask the read-only `infra-recon` agent to check the live cluster (it asks you first);
+- if the repo already has a CLAUDE.md, it only adds what is missing and shows you a diff; it never removes your text without asking;
+- it offers to create `PROGRESS.md` too.
 
-**Repos with a different folder layout** (e.g. manifests in `deploy/`): the kit's `kubernetes.md` rule will not load by itself. Add a project-level rule with extra paths:
+The most important part of `CLAUDE.md` is the **Environment registry** table: which env ↔ which context ↔ which subscription ↔ who may change it. The core rule makes Claude check this table before it touches infrastructure.
+
+**`/infra-rulebook`** fixes repos with a different folder layout. The kit's rules load only for files that match their `paths` (e.g. `**/k8s/**`), so manifests in `deploy/` or Argo CD apps in `apps/*/app.yaml` get no standards. The skill:
+
+1. finds infrastructure files **by content** and shows which ones are covered;
+2. proposes narrow globs for the rest and asks you;
+3. writes small `.claude/rules/devops-kit-paths-<tech>.md` files with only `paths` and a line that points to the kit rule, for example:
 
 ```markdown
-<!-- project-A/.claude/rules/k8s-paths.md -->
 ---
 paths:
-  - "deploy/**/*.yaml"
+  - "deploy/**/*.{yaml,yml}"
 ---
-Files in deploy/ are Kubernetes manifests: apply the standards in ~/.claude/rules/devops-kit/kubernetes.md (read that file before editing).
+
+# devops-ai-kit: Kubernetes files in this repo
+
+The files that match these paths are Kubernetes files. Before you edit them, read `~/.claude/rules/devops-kit/kubernetes.md` and follow it.
 ```
+
+The standards are never copied into the repo: the kit stays the only source. (An `@import` of the kit file does not work here: Claude Code does not load imports of files outside the project.) Commit these files so the whole team gets them.
+
+To do it by hand instead: copy `templates/project-CLAUDE.md` and `templates/PROGRESS.md` into the repo and fill them in, and add `templates/gitignore-additions.txt` to `.gitignore`.
+
+Do not use `claude init` to generate a long CLAUDE.md and keep it as is: keep only the project-specific parts, so the context loaded in each session stays small.
 
 ---
 

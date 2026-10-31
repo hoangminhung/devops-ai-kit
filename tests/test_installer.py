@@ -86,6 +86,20 @@ class Install(InstallerTestCase):
         self.assertEqual(self.language_rule(), self.lang_source("vi"))
         self.assertEqual(self.manifest()["lang"], "vi")
 
+    def test_installed_rulebook_script_finds_installed_rules(self):
+        self.kit("install")
+        script = self.claude / "skills" / "infra-rulebook" / "scripts" / "coverage.py"
+        repo = self.home / "repo"
+        (repo / "deploy").mkdir(parents=True)
+        (repo / "deploy" / "web.yaml").write_text("apiVersion: v1\nkind: Service\nmetadata:\n  name: web\n")
+        env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CONFIG_DIR"}
+        env["HOME"] = str(self.home)
+        result = subprocess.run([sys.executable, str(script), "report", "--repo", str(repo)],
+                                env=env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("deploy/web.yaml", result.stdout)
+        self.assertTrue((self.claude / "skills" / "infra-scout" / "templates" / "project-CLAUDE.md").exists())
+
     def test_default_language_is_english(self):
         self.kit("install")
         self.assertEqual(self.language_rule(), self.lang_source("en"))
