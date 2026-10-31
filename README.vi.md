@@ -17,7 +17,7 @@ Hướng dẫn đầy đủ: [docs/vi/huong-dan.md](docs/vi/huong-dan.md) · Thu
 | Rules | `00-core` (an toàn, cấp rủi ro L0–L3, bằng chứng, tài liệu), `01-language` (ngôn ngữ đầu ra) + Terraform, Ansible, Kubernetes, Helm, Argo CD, Dockerfile, observability | `00-core` và `01-language` luôn nạp; các rule còn lại nạp qua `paths:` khi đụng tới file khớp |
 | Skills | `/infra-scout` + `/infra-rulebook` (onboard repo: CLAUDE.md và độ phủ rule), quy trình `/infra-task`, `grill-me` (hỏi bạn cho tới khi đủ ngữ cảnh), `infra-docs` (change record, concept note, runbook, ADR, postmortem), 8 skill chuẩn thiết kế, 3 playbook (monitoring stack, migrate PostgreSQL bằng PGO, AKS) | Khi cần (khớp mô tả hoặc gọi bằng lệnh `/`) |
 | Subagents | `infra-recon`, `infra-researcher`, `infra-reviewer`, `infra-verifier`, `infra-scribe` | Do `/infra-task` gọi, hoặc khi bạn yêu cầu |
-| Lớp bảo vệ | Permission rules (deny/ask/allow), hook PreToolUse hiện đúng nơi tác động (context, namespace, workspace, subscription) trên mọi lệnh mutating, RBAC read-only + script tạo kubeconfig cho AI | Claude Code / Kubernetes cưỡng chế, không phụ thuộc model |
+| Lớp bảo vệ | Permission rules (deny/ask/allow), hook PreToolUse hiện đúng nơi tác động (context, namespace, workspace, subscription) trên mọi lệnh mutating và chặn các lệnh bị cấm dù cờ đứng ở đâu, RBAC read-only + script tạo kubeconfig cho AI | Claude Code / Kubernetes cưỡng chế, không phụ thuộc model |
 
 ## Bắt đầu nhanh
 
@@ -65,7 +65,9 @@ devops-ai-kit/
 ├── scripts/                 # kit.py (bộ cài), run-kit.sh, validate.py
 ├── setup/k8s/               # RBAC read-only + script tạo kubeconfig cho AI
 ├── templates/               # CLAUDE.md mẫu cho project, PROGRESS.md, .gitignore bổ sung
-├── tests/                   # test cho hook và bộ cài
+├── sandbox/                 # repo hạ tầng mẫu + cluster kind (tùy chọn) có cài bẫy
+├── scenarios/               # kịch bản kiểm thử hành vi của kit (chạy tay hoặc claude -p)
+├── tests/                   # unit test (hook, bộ cài, script, nội dung skill)
 └── docs/{en,vi}/            # hướng dẫn, thuật ngữ, thiết lập cloud read-only
 ```
 

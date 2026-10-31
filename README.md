@@ -17,7 +17,7 @@ Full guide: [docs/en/guide.md](docs/en/guide.md) · Terms: [docs/en/glossary.md]
 | Rules | `00-core` (safety, risk levels L0–L3, evidence, docs), `01-language` (output language) + Terraform, Ansible, Kubernetes, Helm, Argo CD, Dockerfile, observability | `00-core` and `01-language` always; the rest through `paths:` when matching files are touched |
 | Skills | `/infra-scout` + `/infra-rulebook` (onboard a repo: CLAUDE.md and rule coverage), `/infra-task` workflow, `grill-me` (asks you questions until the context is complete), `infra-docs` (change record, concept note, runbook, ADR, postmortem), 8 design-standard skills, 3 playbooks (monitoring stack, PostgreSQL migration with PGO, AKS) | On demand (description match or slash command) |
 | Subagents | `infra-recon`, `infra-researcher`, `infra-reviewer`, `infra-verifier`, `infra-scribe` | Called by `/infra-task` or on request |
-| Guardrails | Permission rules (deny/ask/allow), a PreToolUse hook that shows the real target (context, namespace, workspace, subscription) on every mutating command, read-only RBAC + kubeconfig generator for the AI | Enforced by Claude Code / Kubernetes, not by the model |
+| Guardrails | Permission rules (deny/ask/allow), a PreToolUse hook that shows the real target (context, namespace, workspace, subscription) on every mutating command and denies forbidden commands in any flag order, read-only RBAC + kubeconfig generator for the AI | Enforced by Claude Code / Kubernetes, not by the model |
 
 ## Quick start
 
@@ -65,7 +65,9 @@ devops-ai-kit/
 ├── scripts/                 # kit.py (installer), run-kit.sh, validate.py
 ├── setup/k8s/               # read-only RBAC + AI kubeconfig script
 ├── templates/               # project CLAUDE.md, PROGRESS.md, .gitignore additions
-├── tests/                   # hook and installer tests
+├── sandbox/                 # sample infra repo + optional kind cluster with traps
+├── scenarios/               # behaviour checks for the kit (manual or claude -p)
+├── tests/                   # unit tests (hook, installer, scripts, skill text)
 └── docs/{en,vi}/            # guide, glossary, cloud read-only setup
 ```
 

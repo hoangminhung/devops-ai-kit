@@ -52,3 +52,33 @@ Terms used consistently across the kit's rules, skills, agents and docs. The Vie
 | **Progress file** | `PROGRESS.md`: current state, open items, decisions and done log of a project. Read at session start, updated after each task. | file tiến độ |
 | **Standing rules** | Lasting rules the user gave in chat, kept in the project's `CLAUDE.md` so they apply in every session. | quy tắc thường trực |
 | **Context brief** | The short summary `grill-me` writes at the end: decisions, facts found, open questions, assumptions. | bản tóm tắt ngữ cảnh |
+
+## Onboarding a repo
+
+| Term | Meaning | Vietnamese |
+|---|---|---|
+| **Scout** | `/infra-scout`: reads a repo and writes a short project `CLAUDE.md` with the Environment registry. Each value is marked ✅ found or ⚠️ inferred. | scout (khảo sát repo) |
+| **Rulebook** | `/infra-rulebook`: reports which infrastructure files the kit's rule `paths` cover, and writes small project rules for the folders they miss. | rulebook (bộ rule cho repo) |
+| **Rule coverage** | Which files make a kit rule load. A file outside every rule's `paths` gets no standards. | độ phủ rule |
+| **Environment registry** | The table in the project's `CLAUDE.md` that lists each environment's target (context, workspace, subscription …). | bảng môi trường |
+
+## Running a task
+
+| Term | Meaning | Vietnamese |
+|---|---|---|
+| **Phase** | A stage of the `/infra-task` workflow (Phase 0 brief … Phase 10 close). Not the same as a plan step. | phase (giai đoạn) |
+| **Step** | One checkbox line in the plan (`- [ ] Step N: …`). Ticked only after its verify passed. | step (bước) |
+| **Resume** | Continue a task from the first unticked step, after checking that the live state still matches the last ticked step. | resume (làm tiếp) |
+| **Requirement change** | A change of scope during a task. Ticked steps are never edited; new steps get a letter (`Step 3b`) and are reviewed again. | thay đổi yêu cầu |
+| **Slice** | A part of a big task that can be deployed, verified and rolled back on its own, with its own plan and gates (`slices/<NN>-<name>/`). | slice (lát cắt) |
+| **Mode `interactive`** | Default run mode: `/infra-task` stops after each phase. | chế độ interactive |
+| **Mode `auto`** | Runs the paper phases without pausing (L1/L2 only). GATE 1, GATE 2 and every mutating command still wait for the user. | chế độ auto |
+| **Hard limit** | What waits for the user in every mode: both gates and every mutating command. | giới hạn cứng |
+
+## Testing the kit
+
+| Term | Meaning | Vietnamese |
+|---|---|---|
+| **Sandbox** | `sandbox/`: a sample infra repo, and an optional local kind cluster with traps, used to test the kit safely. | sandbox |
+| **Scenario** | `scenarios/NN-*.md`: a prompt plus the behaviour expected from the kit, checked by hand or with `claude -p`. | kịch bản kiểm thử |
+| **Flag-first rule** | The twin of a permission rule for commands with a flag before the verb (`kubectl * get *`). | rule cho dạng cờ đứng trước |

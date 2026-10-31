@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.2.0 — 2026-10-31
 
 - **Security fix — permission rules and flag order.** The settings rules match command text from the start, so a flag before the verb skipped them: `kubectl --context X get secret … -o yaml` was not denied, `kubectl --context X delete ns` and `terraform -chdir=X destroy` only asked, and read-only `kubectl --context X get` needed approval. Now:
   - the hook **denies** the forbidden commands (namespace / PV / PVC / CRD deletes, `destroy` and `apply -destroy`, `helm uninstall`, secret values from `kubectl get secret -o …`, Key Vault, Secrets Manager, GCP Secret Manager) in any flag order;
