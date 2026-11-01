@@ -48,6 +48,8 @@ BLOCK_PROD = os.environ.get("DEVOPS_KIT_BLOCK_PROD") == "1"
 SEGMENT_SPLIT = re.compile(r"&&|\|\||;|\||\n")
 ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 WRAPPERS = {"sudo", "time", "nice", "nohup", "command", "builtin", "exec", "&"}
+# Shell keywords that can start a segment: `for …; do kubectl …; done`, `if …; then …; fi`, `{ …; }`, `( … )`, `! …`
+SHELL_KEYWORDS = {"do", "then", "else", "elif", "while", "until", "!", "{", "(", "}", ")"}
 SHELL_TOOLS = {"Bash", "PowerShell"}
 SHELLS = {"bash", "sh", "zsh", "dash"}
 
@@ -160,15 +162,18 @@ def tokenize(segment):
 
 
 def peel(tokens):
-    """Strip leading env assignments and wrapper commands.
+    """Strip leading env assignments, wrapper commands and shell keywords.
 
     Returns (tokens, env_overrides).
     """
+    tokens = [t for t in (tok.lstrip("(").rstrip(")") if tok not in ("(", ")") else tok for tok in tokens) if t]
     env = {}
     i = 0
     while i < len(tokens):
         tok = tokens[i]
-        if ENV_ASSIGN.match(tok):
+        if tok in SHELL_KEYWORDS:
+            i += 1
+        elif ENV_ASSIGN.match(tok):
             key, _, val = tok.partition("=")
             env[key] = val
             i += 1
@@ -385,19 +390,22 @@ def kubectl_secret_read(base, args):
     if any(resource_types(p) & SECRET_RESOURCES for p in pos[1:]):
         return (f"{base} get Secrets with an output or log level that prints values "
                 "(use `kubectl describe secret <name>`, or secret_fingerprint.py to compare)")
-    if any(ch in p for p in pos[1:] for ch in "${`"):
-        return f"{base} get with a shell expansion in the resource and an output that prints values (cannot tell if it is a Secret)"
     return None
 
 
 def kubectl_unknown_objects(base, args):
     """`kubectl get -f x.yaml -o yaml`: the files may name Secrets, so ask (not deny)."""
     pos, flags, head = kubectl_get_parts(args)
-    if pos[:1] != ["get"] or not any(f in flags for f in KUBECTL_UNKNOWN_OBJECTS):
+    if pos[:1] != ["get"]:
+        return None
+    from_files = any(f in flags for f in KUBECTL_UNKNOWN_OBJECTS)
+    expanded = any(ch in p for p in pos[1:] for ch in "${`*?[")
+    if not (from_files or expanded):
         return None
     if any(v.lower() not in SECRET_SAFE_OUTPUT for v in output_values(head)) or "--template" in flags or verbosity(flags) >= 6:
-        return (f"{base} get objects from -f / -k with an output that prints values: "
-                "if the files name a Secret, this shows its values", [], False)
+        where = "objects from -f / -k" if from_files else "a resource set by the shell ($VAR, {a,b}, glob)"
+        return (f"{base} get {where} with an output that prints values: if it is a Secret, this shows its values",
+                [], False)
     return None
 
 

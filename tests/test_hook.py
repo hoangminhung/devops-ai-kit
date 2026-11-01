@@ -159,11 +159,15 @@ class ForbiddenCommands(HookTestCase):
         "helm status web -ojson",
         "helm status web -oyaml -n x",
         "kubectl get -v=0 --raw https://x/api/v1/namespaces/x/secrets/db",
-        "kubectl get $'secret' db -o yaml",
-        "kubectl get -n x {secret,} db -o yaml",
-        "kubectl get ${R:-secret} db -o yaml",
         "kubectl view-secret db --all",
         "kubectl apply view-last-applied secret/db",
+        # shell keywords at the start of a segment (third review round)
+        "for x in 1; do kubectl get secret db -o yaml; done",
+        "if true; then kubectl get secret db -o yaml; fi",
+        "{ kubectl get secret db -o yaml; }",
+        "(kubectl get secret db -o yaml)",
+        "! kubectl get secret db -o yaml",
+        "for n in a b; do kubectl --context x delete ns $n; done",
     ]
     ALLOWED = [
         "kubectl get secret -o name",
@@ -207,12 +211,14 @@ class ForbiddenCommands(HookTestCase):
             with self.subTest(command=command):
                 self.assertFalse(any(rule.match(command) for rule in rules))
 
-    def test_objects_from_files_ask_instead_of_deny(self):
-        for command in ("kubectl get -f k8s/secret.yaml -o yaml", "kubectl get -k overlays/prod -o yaml"):
+    def test_unknown_resources_ask_instead_of_deny(self):
+        for command in ("kubectl get -f k8s/secret.yaml -o yaml", "kubectl get -k overlays/prod -o yaml",
+                        "kubectl get pod $POD -o yaml", "kubectl get $'secret' db -o yaml",
+                        "kubectl get -n x {secret,} db -o yaml", "kubectl get secre? db -o yaml"):
             with self.subTest(command=command):
                 decision, reason = self.decision(command)
                 self.assertEqual(decision, "ask")
-                self.assertIn("if the files name a Secret", reason)
+                self.assertIn("if it is a Secret, this shows its values", reason)
 
     def test_secret_deny_points_to_describe(self):
         self.assertIn("kubectl describe secret", self.decision("kubectl get secret db -o yaml")[1])
