@@ -53,10 +53,12 @@ class HookTestCase(unittest.TestCase):
         cls.tmp.cleanup()
 
     def run_hook(self, command, tool="Bash", env=None, raw_input=None, encoding=None):
-        environ = {"PATH": self.path, "HOME": str(self.home)}
+        # Most tests check the "ask" text, so production blocking (on by default) is off here.
+        environ = {"PATH": self.path, "HOME": str(self.home), "DEVOPS_KIT_BLOCK_PROD": "0"}
         if encoding:
             environ["PYTHONIOENCODING"] = encoding
         environ.update(env or {})
+        environ = {k: v for k, v in environ.items() if v is not None}  # env={"X": None} removes X
         payload = raw_input if raw_input is not None else json.dumps(
             {"tool_name": tool, "tool_input": {"command": command}, "cwd": str(self.workdir)}
         ).encode("utf-8")
@@ -434,7 +436,15 @@ class EncodingAndSwitches(HookTestCase):
         decision, reason = self.decision("kubectl --context aks-prod-weu delete pod web-1",
                                          env={"DEVOPS_KIT_BLOCK_PROD": "1"})
         self.assertEqual(decision, "deny")
-        self.assertIn("DEVOPS_KIT_BLOCK_PROD=1", reason)
+        self.assertIn("DEVOPS_KIT_BLOCK_PROD=0 turns it off", reason)
+
+    def test_production_is_blocked_by_default(self):
+        decision, _ = self.decision("kubectl --context aks-prod-weu delete pod web-1",
+                                    env={"DEVOPS_KIT_BLOCK_PROD": None})
+        self.assertEqual(decision, "deny")
+        decision, _ = self.decision("kubectl --context kind-dev delete pod web-1",
+                                    env={"DEVOPS_KIT_BLOCK_PROD": None})
+        self.assertEqual(decision, "ask")
 
     def test_block_prod_still_asks_for_non_production(self):
         decision, _ = self.decision("kubectl delete pod web-1", env={"DEVOPS_KIT_BLOCK_PROD": "1"})
@@ -454,6 +464,63 @@ class EncodingAndSwitches(HookTestCase):
 
     def test_invalid_json_fails_open(self):
         self.assertEqual(self.run_hook(None, raw_input=b"not json"), b"")
+
+
+class DevPattern(HookTestCase):
+    """DEVOPS_KIT_DEV_PATTERN (opt-in): one simple command on a dev target needs no confirmation."""
+    ENV = {"DEVOPS_KIT_DEV_PATTERN": r"^(kind-|dev)"}
+
+    def test_single_command_on_dev_is_allowed(self):
+        decision, reason = self.decision("kubectl --context kind-dev -n app scale deploy/web --replicas=2", env=self.ENV)
+        self.assertEqual(decision, "allow")
+        self.assertIn("DEVOPS_KIT_DEV_PATTERN", reason)
+        self.assertEqual(self.decision("terraform apply tfplan", env=dict(self.ENV, TF_WORKSPACE="dev"))[0], "allow")
+
+    def test_still_asks_when_not_simple_or_not_dev(self):
+        for command in (
+            "kubectl --context kind-dev apply -f a.yaml && rm -r /tmp/x",
+            "kubectl --context kind-dev apply -f a.yaml; kubectl --context kind-dev delete pod x",
+            "kubectl --context kind-dev apply -f $(echo a.yaml)",
+            "bash -c 'kubectl --context kind-dev apply -f a.yaml'",
+            "kubectl --context aks-stg apply -f a.yaml",
+            "kubectl --context dev-ro apply -f a.yaml",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(self.decision(command, env=self.ENV)[0], "ask")
+
+    def test_production_name_wins_over_dev_pattern(self):
+        env = dict(self.ENV, DEVOPS_KIT_BLOCK_PROD=None)
+        self.assertEqual(self.decision("kubectl --context dev --kubeconfig k/kubeconfig.hetzner-live delete pod x", env=env)[0], "deny")
+
+    def test_forbidden_commands_stay_denied(self):
+        self.assertEqual(self.decision("kubectl --context kind-dev delete ns app", env=self.ENV)[0], "deny")
+
+    def test_off_by_default_and_bad_regex(self):
+        self.assertEqual(self.decision("kubectl --context kind-dev delete pod x")[0], "ask")
+        self.assertEqual(self.decision("kubectl --context kind-dev delete pod x", env={"DEVOPS_KIT_DEV_PATTERN": "("})[0], "ask")
+
+
+class Heredocs(HookTestCase):
+    def test_data_heredoc_body_is_not_read_as_commands(self):
+        doc = "cat > notes.md <<'EOF'\nkubectl --context x delete ns shop\nterraform destroy\nEOF\ngit status"
+        self.assertEqual(self.decision(doc), (None, None))
+        doc = "python3 - <<EOF\nprint('kubectl delete pod web')\nEOF"
+        self.assertEqual(self.decision(doc), (None, None))
+
+    def test_yaml_heredoc_to_kubectl_still_asks_for_the_apply(self):
+        decision, reason = self.decision("kubectl apply -f - <<EOF\napiVersion: v1\nkind: ConfigMap\nEOF")
+        self.assertEqual(decision, "ask")
+        self.assertIn("kubectl apply", reason)
+
+    def test_heredoc_fed_to_a_shell_is_checked(self):
+        self.assertEqual(self.decision("bash <<'EOF'\nkubectl --context x delete ns shop\nEOF")[0], "deny")
+        self.assertEqual(self.decision("sh <<-EOF\n\tkubectl delete pod web\n\tEOF")[0], "ask")
+
+    def test_unquoted_body_with_substitution_is_checked(self):
+        self.assertEqual(self.decision("cat <<EOF\n$(x)\nkubectl delete pod web\nEOF")[0], "ask")
+
+    def test_commands_after_the_heredoc_are_checked(self):
+        self.assertEqual(self.decision("cat > a.txt <<'EOF'\nhello\nEOF\nkubectl delete pod web")[0], "ask")
 
 
 if __name__ == "__main__":
