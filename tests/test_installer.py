@@ -165,6 +165,20 @@ class Reinstall(InstallerTestCase):
         out = self.kit("check", check=False).stdout
         self.assertIn("Output language   : vi", out)
         self.assertIn("Context-guard hook: registered", out)
+        self.assertIn("Production changes: blocked (default)", out)
+        self.assertIn("Dev targets       : confirm every change (default)", out)
+
+    def test_install_mentions_production_block(self):
+        out = self.kit("install").stdout
+        self.assertIn("production changes are denied by default", out)
+        out = self.kit("install", "--env", "DEVOPS_KIT_BLOCK_PROD=0").stdout
+        self.assertNotIn("production changes are denied by default", out)
+
+    def test_check_shows_guard_knobs(self):
+        self.kit("install", "--env", "DEVOPS_KIT_BLOCK_PROD=0", "--env", "DEVOPS_KIT_DEV_PATTERN=^kind-")
+        out = self.kit("check", check=False).stdout
+        self.assertIn("Production changes: ask (DEVOPS_KIT_BLOCK_PROD=0)", out)
+        self.assertIn("no confirm for '^kind-'", out)
 
 
 class Uninstall(InstallerTestCase):

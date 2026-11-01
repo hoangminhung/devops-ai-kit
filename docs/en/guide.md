@@ -266,9 +266,15 @@ See [cloud-readonly.md](cloud-readonly.md). Summary:
 - AWS: a `ViewOnlyAccess` profile, then `--env AWS_PROFILE=ai-readonly`.
 - GCP: a separate config folder, then `--env CLOUDSDK_CONFIG=...`.
 
-### 3.3. Hard-block every production change (optional)
+### 3.3. Production is blocked, dev can be quiet
 
-Add `--env DEVOPS_KIT_BLOCK_PROD=1`. The hook will **deny** (instead of ask) every mutating command whose target name (context, namespace, kubeconfig file name, workspace, …) matches the production pattern (`prod`, `prd`, `production`, `live`). Claude is told to prepare a GitOps PR or give you the command to run yourself. Change the pattern with `--env DEVOPS_KIT_PROD_PATTERN='<regex>'`.
+**Production (on by default).** The hook **denies** every mutating command whose target name (context, namespace, kubeconfig file name, workspace, …) matches the production pattern (`prod`, `prd`, `production`, `live`). Claude prepares a GitOps PR or gives you the command to run yourself, and `/infra-task` plans production steps as "Executed by: user" or "GitOps PR". Change the pattern with `--env DEVOPS_KIT_PROD_PATTERN='<regex>'`. To get a confirm dialog instead (not recommended), use `--env DEVOPS_KIT_BLOCK_PROD=0`.
+
+**Dev and sandbox (optional).** Too many confirm dialogs teach people to click "Yes" without reading, and then the production line is missed too. If you trust a set of dev targets, add for example `--env DEVOPS_KIT_DEV_PATTERN='^(kind-|minikube|dev-)'`. Then **one plain** `kubectl`, `helm`, `terraform` or `tofu` command whose context or workspace matches runs without a dialog. This also skips the settings "ask" rules for that command, so the hook is strict. Everything else still asks: other tools (git, ansible, cloud CLIs, make), any shell feature (`&&`, `&`, `;`, `|`, `>`, `<`, `$`, `#`, a second line), `--server`, `--cluster`, `--user`, `--token`, `--as`, `-auto-approve`, any word that looks like production (for example `-var-file=prod.tfvars`), `-ro` contexts. The forbidden commands stay denied. Match only names that can never be shared environments.
+
+Known limits: the hook checks **names**, not where they point. A context called `kind-a` in a kubeconfig that points to a shared cluster is still "dev". `terraform apply` on a dev workspace can still run local code (`local-exec`, `external` data sources) in whatever folder it is pointed at.
+
+`./check.sh` shows both settings.
 
 ### 3.4. Compare secret values without showing them
 

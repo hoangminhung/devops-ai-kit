@@ -266,9 +266,15 @@ Xem [cloud-readonly.md](cloud-readonly.md). Tóm tắt:
 - AWS: profile `ViewOnlyAccess`, rồi `--env AWS_PROFILE=ai-readonly`.
 - GCP: thư mục cấu hình riêng, rồi `--env CLOUDSDK_CONFIG=...`.
 
-### 3.3. Chặn cứng mọi thay đổi production (tùy chọn)
+### 3.3. Production bị chặn, dev có thể bớt hỏi
 
-Đặt thêm `--env DEVOPS_KIT_BLOCK_PROD=1`. Hook sẽ **từ chối** (thay vì hỏi) mọi lệnh mutating mà tên đích (context, namespace, tên file kubeconfig, workspace, …) khớp mẫu production (`prod`, `prd`, `production`, `live`). Claude sẽ được báo là phải chuẩn bị PR GitOps hoặc đưa lệnh cho bạn tự chạy. Đổi mẫu nhận diện bằng `--env DEVOPS_KIT_PROD_PATTERN='<regex>'`.
+**Production (bật mặc định).** Hook **từ chối** mọi lệnh mutating mà tên đích (context, namespace, tên file kubeconfig, workspace, …) khớp mẫu production (`prod`, `prd`, `production`, `live`). Claude sẽ chuẩn bị PR GitOps hoặc đưa lệnh cho bạn tự chạy, và `/infra-task` lên kế hoạch các bước production là "Executed by: user" hoặc "GitOps PR". Đổi mẫu nhận diện bằng `--env DEVOPS_KIT_PROD_PATTERN='<regex>'`. Muốn hỏi lại thay vì chặn (không khuyến khích): `--env DEVOPS_KIT_BLOCK_PROD=0`.
+
+**Dev và sandbox (tùy chọn).** Hỏi quá nhiều khiến người dùng quen tay bấm "Yes" mà không đọc, và rồi bỏ lỡ cả dòng production. Nếu bạn tin một nhóm đích dev, thêm ví dụ `--env DEVOPS_KIT_DEV_PATTERN='^(kind-|minikube|dev-)'`. Khi đó **một lệnh đơn thuần** `kubectl`, `helm`, `terraform` hoặc `tofu` có context hoặc workspace khớp mẫu sẽ chạy mà không hỏi. Lệnh đó cũng bỏ qua các rule "ask" trong settings, nên hook xét rất chặt. Mọi trường hợp khác vẫn hỏi: công cụ khác (git, ansible, CLI cloud, make), bất kỳ tính năng shell nào (`&&`, `&`, `;`, `|`, `>`, `<`, `$`, `#`, dòng thứ hai), `--server`, `--cluster`, `--user`, `--token`, `--as`, `-auto-approve`, bất kỳ từ nào trông giống production (ví dụ `-var-file=prod.tfvars`), context `-ro`. Các lệnh bị cấm vẫn bị chặn. Chỉ khớp những tên không bao giờ là môi trường dùng chung.
+
+Giới hạn đã biết: hook chỉ xét **tên**, không xét tên đó trỏ tới đâu. Một context tên `kind-a` nằm trong kubeconfig trỏ tới cluster dùng chung vẫn bị coi là "dev". `terraform apply` trên workspace dev vẫn có thể chạy code local (`local-exec`, data source `external`) ở bất kỳ thư mục nào được chỉ tới.
+
+`./check.sh` hiện cả hai thiết lập.
 
 ### 3.4. Đối chiếu giá trị secret mà không hiện giá trị
 
