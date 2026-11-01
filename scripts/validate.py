@@ -204,11 +204,15 @@ REVIEWED = re.compile(r"Last reviewed: (\d{4}-\d{2}-\d{2})")
 
 
 def stale_reviews(kit_dir, today, max_days):
-    """[(relative path, review date)] for kit files whose `Last reviewed:` date is older than max_days."""
+    """[(relative path, review date or "no date")] for rules, SKILL.md files and agents not reviewed in max_days."""
+    claude = kit_dir / "claude"
+    files = [*claude.glob("rules/**/*.md"), *claude.glob("skills/*/SKILL.md"), *claude.glob("agents/*.md")]
     stale = []
-    for path in sorted((kit_dir / "claude").rglob("*.md")):
+    for path in sorted(files):
         match = REVIEWED.search(path.read_text(encoding="utf-8"))
-        if match and (today - dt.date.fromisoformat(match.group(1))).days > max_days:
+        if not match:
+            stale.append((path.relative_to(kit_dir), "no date"))
+        elif (today - dt.date.fromisoformat(match.group(1))).days > max_days:
             stale.append((path.relative_to(kit_dir), match.group(1)))
     return stale
 
@@ -231,7 +235,10 @@ def main(argv=None):
     for message in errors:
         print(f"ERROR {message}")
     for path, date in stale:
-        print(f"WARNING {path}: last reviewed {date}, more than {args.stale_days} days ago; check it against current versions")
+        if date == "no date":
+            print(f"WARNING {path}: no 'Last reviewed: YYYY-MM-DD' line")
+        else:
+            print(f"WARNING {path}: last reviewed {date}, more than {args.stale_days} days ago; check it against current versions")
     print(f"validate: {len(errors)} error(s), {len(stale)} stale file(s)")
     return 1 if errors or (stale and args.fail_on_stale) else 0
 

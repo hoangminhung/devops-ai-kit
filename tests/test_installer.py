@@ -9,6 +9,7 @@ Run: python3 -m unittest discover -s tests -v
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -230,6 +231,30 @@ class ReleaseWarnings(unittest.TestCase):
             self.assertIn("not a release tag", self.kit.release_warnings(repo)[0])
             self.git(repo, "tag", "-a", "v1.0.0", "-m", "v1.0.0")
             self.assertIn("tag v1.0.0 is not signed", self.kit.release_warnings(repo)[0])
+            self.git(repo, "tag", "v1.0.1")  # lightweight tag on the same commit: still a tag, still not signed
+            (repo / "VERSION").write_text("local edit\n")
+            warnings = self.kit.release_warnings(repo)
+            self.assertIn("local changes", warnings[0])
+            self.assertIn("is not signed", warnings[1])
+
+    @unittest.skipUnless(shutil.which("ssh-keygen"), "ssh-keygen not installed")
+    def test_ssh_signed_tag_with_allowed_signer_has_no_warning(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, key = Path(tmp) / "repo", Path(tmp) / "key"
+            repo.mkdir()
+            subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "t@example.com", "-f", str(key)], check=True)
+            signers = Path(tmp) / "allowed_signers"
+            signers.write_text("t@example.com " + Path(f"{key}.pub").read_text())
+            self.git(repo, "init", "-q")
+            for name, value in (("gpg.format", "ssh"), ("user.signingkey", str(key)),
+                                ("gpg.ssh.allowedSignersFile", str(signers)),
+                                ("user.name", "t"), ("user.email", "t@example.com")):
+                self.git(repo, "config", name, value)
+            (repo / "VERSION").write_text("1.0.0\n")
+            self.git(repo, "add", ".")
+            self.git(repo, "commit", "-qm", "init")
+            subprocess.run(["git", "-C", str(repo), "tag", "-s", "v1.0.0", "-m", "v1.0.0"], check=True, capture_output=True)
+            self.assertEqual(self.kit.release_warnings(repo), [])
 
 
 if __name__ == "__main__":

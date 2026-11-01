@@ -4,6 +4,8 @@ description: Write infrastructure documentation based on real evidence — chang
 when_to_use: Use when the user needs docs, handover / onboarding material, an explanation of how a tool or tech stack works, a record of a change that was made, a runbook, ADR or postmortem — even if they just say "write docs" or "explain how this works". Vietnamese triggers — "viết tài liệu", "giải thích cái này hoạt động thế nào", "tài liệu bàn giao / hướng dẫn người mới", "giải thích công cụ hoặc tech stack hoạt động thế nào", "ghi lại thay đổi đã làm", "viết runbook, ADR, postmortem".
 ---
 
+<!-- devops-ai-kit · Last reviewed: 2026-11-01 -->
+
 # Infrastructure documentation
 
 Docs are for three readers:

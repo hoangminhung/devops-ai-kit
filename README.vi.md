@@ -23,7 +23,7 @@ Hướng dẫn đầy đủ: [docs/vi/huong-dan.md](docs/vi/huong-dan.md) · Thu
 
 ```bash
 git clone https://github.com/hoangminhung/devops-ai-kit.git ~/devops-ai-kit && cd ~/devops-ai-kit
-git checkout "$(git describe --tags --abbrev=0)"   # bản release mới nhất, không phải nhánh main
+tag=$(git describe --tags --abbrev=0) && git checkout "$tag"   # bản release mới nhất, không phải nhánh main
 ./install.sh --dry-run --lang vi   # xem trước, không ghi gì
 ./install.sh --lang vi             # cài vào ~/.claude, tài liệu và báo cáo viết tiếng Việt
 ./check.sh                         # trạng thái, ngôn ngữ đầu ra, công cụ gate nào đã có

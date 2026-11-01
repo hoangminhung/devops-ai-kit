@@ -220,19 +220,26 @@ def release_warnings(kit_dir):
             return subprocess.run(["git", "-C", str(kit_dir), *cmd], capture_output=True, text=True, timeout=10)
         except (OSError, subprocess.SubprocessError):
             return None
+    if not (kit_dir / ".git").exists():
+        return []  # a downloaded archive: nothing to check
     inside = git("rev-parse", "--is-inside-work-tree")
     if inside is None or inside.returncode != 0:
-        return []  # not a git checkout (e.g. a downloaded archive): nothing to check
+        return ["WARNING: cannot read the git checkout (git missing, or `safe.directory`), so the release tag "
+                "was not checked."]
+    warnings = []
+    dirty = git("status", "--porcelain", "--untracked-files=no")
+    if dirty is not None and dirty.stdout.strip():
+        warnings.append("WARNING: the checkout has local changes; they will be installed too.")
     tag = git("describe", "--tags", "--exact-match", "HEAD")
     if tag is None or tag.returncode != 0:
-        return ["WARNING: this checkout is not a release tag. For daily use, install a release: "
-                "`git checkout <tag>` (see the GitHub releases page), then run ./install.sh again."]
+        return warnings + ["WARNING: this checkout is not a release tag. For daily use, install a release "
+                           f"(see {GUIDE} §2), then run ./install.sh again."]
     name = tag.stdout.strip()
     verify = git("verify-tag", name)
     if verify is None or verify.returncode != 0:
-        return [f"WARNING: tag {name} is not signed, or its signature cannot be checked here "
-                f"(`git verify-tag {name}`). See {GUIDE} §9 to verify releases."]
-    return []
+        warnings.append(f"WARNING: tag {name} is not signed, or its signature cannot be checked here "
+                        f"(`git verify-tag {name}`). See {GUIDE} §9 to verify releases.")
+    return warnings
 
 
 def install(args):

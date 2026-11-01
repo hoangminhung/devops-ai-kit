@@ -2,8 +2,8 @@
 
 ## Unreleased
 
-- Release integrity: install a release tag, not `main` (README and guide now `git checkout` the latest tag); `./install.sh` warns when the checkout is not a release tag or the tag's signature cannot be checked. Guide §9 explains how to verify signed tags and how the maintainer signs them with an SSH key.
-- `validate.py` warns about rules and skills whose `Last reviewed` date is older than 183 days (`--stale-days`, `--fail-on-stale`); a monthly workflow fails on them so the owner gets an email.
+- Release integrity: install a release tag, not `main` (README and guide now `git checkout` the latest tag); `./install.sh` warns when the checkout is not a release tag, has local changes, or the tag's signature cannot be checked (a reminder, not a security control: verify the tag before checkout). Guide §9 explains how to verify signed tags and how the maintainer signs them with an SSH key.
+- `validate.py` warns about rules and skills whose `Last reviewed` date is older than 183 days or have no date (`--stale-days`, `--fail-on-stale`); `infra-docs`, `infra-task` and the agents now have a date; a monthly workflow fails on them so the owner gets an email.
 
 ## 1.2.0 — 2026-10-31
 

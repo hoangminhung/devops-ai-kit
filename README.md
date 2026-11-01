@@ -23,7 +23,7 @@ Full guide: [docs/en/guide.md](docs/en/guide.md) · Terms: [docs/en/glossary.md]
 
 ```bash
 git clone https://github.com/hoangminhung/devops-ai-kit.git ~/devops-ai-kit && cd ~/devops-ai-kit
-git checkout "$(git describe --tags --abbrev=0)"   # the latest release, not the main branch
+tag=$(git describe --tags --abbrev=0) && git checkout "$tag"   # the latest release, not the main branch
 ./install.sh --dry-run        # preview, writes nothing
 ./install.sh --lang en        # install into ~/.claude (use --lang vi for Vietnamese docs and reports)
 ./check.sh                    # status, output language, which gate tools are installed

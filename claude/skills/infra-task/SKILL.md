@@ -6,6 +6,8 @@ argument-hint: "<task description> [--mode auto|interactive] | resume <task fold
 disable-model-invocation: true
 ---
 
+<!-- devops-ai-kit · Last reviewed: 2026-11-01 -->
+
 # /infra-task — Controlled infrastructure change workflow
 
 User request: $ARGUMENTS

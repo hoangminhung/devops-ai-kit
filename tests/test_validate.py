@@ -67,10 +67,14 @@ class StaleReviews(unittest.TestCase):
             kit = Path(tmp)
             (kit / "claude/skills/a").mkdir(parents=True)
             (kit / "claude/skills/a/SKILL.md").write_text("<!-- devops-ai-kit · Last reviewed: 2026-01-01 -->\n")
-            (kit / "claude/skills/b.md").write_text("<!-- devops-ai-kit · Last reviewed: 2026-10-01 -->\n")
-            (kit / "claude/skills/c.md").write_text("no date\n")
+            (kit / "claude/skills/b").mkdir(parents=True)
+            (kit / "claude/skills/b/SKILL.md").write_text("<!-- devops-ai-kit · Last reviewed: 2026-10-01 -->\n")
+            (kit / "claude/agents").mkdir(parents=True)
+            (kit / "claude/agents/x.md").write_text("no date\n")
+            (kit / "claude/skills/b/references").mkdir()
+            (kit / "claude/skills/b/references/r.md").write_text("no date, not checked\n")
             stale = validate.stale_reviews(kit, dt.date(2026, 11, 1), 183)
-        self.assertEqual(stale, [(Path("claude/skills/a/SKILL.md"), "2026-01-01")])
+        self.assertEqual(stale, [(Path("claude/agents/x.md"), "no date"), (Path("claude/skills/a/SKILL.md"), "2026-01-01")])
 
     def test_fail_on_stale_flag(self):
         result = subprocess.run([sys.executable, str(SCRIPT), "--stale-days", "0", "--fail-on-stale"],
