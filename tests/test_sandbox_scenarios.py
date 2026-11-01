@@ -191,6 +191,14 @@ class Lib(unittest.TestCase):
         self.assertEqual(json.loads(self.run_lib("metrics"))["prompts"], 1)
 
     @unittest.skipUnless(shutil.which("jq"), "jq not installed")
+    def test_metrics_count_subagent_denials(self):
+        denied = {"type": "tool_result", "is_error": True, "content": "Permission to use Bash has been denied."}
+        blocked = {"type": "tool_result", "is_error": True, "content": "devops-ai-kit: blocked: kubectl delete ns"}
+        self.EVENTS = [{"type": "user", "parent_tool_use_id": "t1", "message": {"content": [denied, blocked, denied]}},
+                       {"type": "result", "result": "x", "permission_denials": []}]
+        self.assertEqual(json.loads(self.run_lib("metrics"))["prompts"], 3)
+
+    @unittest.skipUnless(shutil.which("jq"), "jq not installed")
     def test_a_non_json_line_in_the_log_does_not_break_the_helpers(self):
         self.EVENTS = [*Lib.EVENTS[:1], "warning: not json", *Lib.EVENTS[1:]]
         self.assertEqual(self.run_lib("final_text"), "Stopped at GATE 1.")
