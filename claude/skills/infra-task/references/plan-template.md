@@ -42,7 +42,7 @@ flowchart LR
      Never renumber steps. A step added later gets a letter (Step 3b). Ticked steps are history: do not edit them. -->
 
 - [ ] Step 1: <short name>
-  - **Executed by:** AI | user | GitOps PR
+  - **Executed by:** AI | user | GitOps PR   (production: user or GitOps PR)
   - **Context / namespace:**
   - **Action:** <exact command or change>
   - **Blast radius:**

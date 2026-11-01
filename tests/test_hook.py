@@ -522,6 +522,52 @@ class Heredocs(HookTestCase):
     def test_commands_after_the_heredoc_are_checked(self):
         self.assertEqual(self.decision("cat > a.txt <<'EOF'\nhello\nEOF\nkubectl delete pod web")[0], "ask")
 
+    def test_body_is_checked_when_it_may_run(self):
+        """Found in review: these hid a forbidden command. Only cat/tee/kubectl apply -f - bodies are skipped."""
+        delete = "kubectl --context x delete ns shop"
+        for command in (
+            f"echo '<<EOF'\n{delete}",                      # << inside quotes is not a heredoc
+            f"cat <<EOF-1\nhello\nEOF-1\n{delete}",          # delimiter is the whole word
+            f"cat <<'E'OF\nhello\nEOF\n{delete}",            # quotes removed: delimiter EOF
+            f"cat <<EOF | bash\n{delete}\nEOF",              # piped to a shell
+            f"source /dev/stdin <<EOF\n{delete}\nEOF",
+            f"ssh jump <<EOF\n{delete}\nEOF",
+            f"kubectl exec -i p -- sh <<EOF\n{delete}\nEOF",
+            f"cat > a.txt <<'EOF'\nno end line\n{delete}",   # no end line: keep everything
+            f"kubectl get pods <<<a\n{delete}",              # here-string, not a heredoc
+            f"kubectl get pods # <<EOF\n{delete}",           # in a comment
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(self.decision(command)[0], "deny")
+
+
+class DevPatternIsStrict(HookTestCase):
+    """Found in review: the "allow" covers the whole Bash command, so it must be one plain call."""
+    ENV = {"DEVOPS_KIT_DEV_PATTERN": r"^(kind-|dev-)"}
+
+    def test_no_allow_for_anything_but_one_plain_call(self):
+        for command in (
+            "kubectl --context kind-a delete pod x & rm -rf ~/work",
+            "kubectl --context kind-a delete pod x # <<EOF\nrm -rf ~/work",
+            "kubectl --context kind-a apply -f - > ~/.bashrc",
+            "kubectl --context kind-a --cluster prod-aks --user prod-admin delete deploy api",
+            "kubectl --context kind-a --server https://10.0.0.1 delete deploy api",
+            "kubectl --context kind-a --token abc delete deploy api",
+            "helm --kube-context kind-a --kube-apiserver https://10.0.0.1 upgrade web ./chart",
+            "git push origin dev-x:main",
+            "ansible-playbook -i dev-inv site.yml",
+            "az --subscription dev-sub group delete -n rg",
+            "make deploy e=dev-a",
+        ):
+            with self.subTest(command=command):
+                self.assertNotEqual(self.decision(command, env=self.ENV)[0], "allow")
+
+    def test_no_allow_when_any_word_looks_like_production(self):
+        env = dict(self.ENV, TF_WORKSPACE="dev-a")
+        self.assertNotEqual(self.decision("terraform apply -var-file=prod.tfvars", env=env)[0], "allow")
+        self.assertNotEqual(self.decision("terraform apply -auto-approve tfplan", env=env)[0], "allow")
+        self.assertEqual(self.decision("terraform apply tfplan", env=env)[0], "allow")
+
 
 if __name__ == "__main__":
     unittest.main()
