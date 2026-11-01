@@ -25,6 +25,12 @@ when_to_use: Use when handling TLS certificates, Kubernetes secrets, credentials
 - **SHOULD** External Secrets Operator pulls from Azure Key Vault / AWS Secrets Manager / GCP Secret Manager / Vault. **CONTEXT** SOPS or Sealed Secrets when there is no central secret store yet.
 - **SHOULD** Limit RBAC for reading Secrets: the default `view` role cannot read Secrets; do not widen it unless needed.
 - **SHOULD** Have a rotation process for each type of secret, and know which apps must restart to get the new value.
+- **MUST** The AI never prints a secret value. To compare values, run `python3 <skill base directory>/scripts/secret_fingerprint.py`:
+  - `SPEC` (`[context:]namespace/name`): key names, sizes, kinds (PEM, JSON, text);
+  - `SPEC OTHER_SPEC`: match / differ per key (for example prod vs staging);
+  - `SPEC --env KEY=ENV_VAR`: compares one key with a value the user exported in the shell before starting Claude.
+  It prints no values and no hashes. Exit code 0 = all equal, 1 = something differs or is missing, 2 = error.
+  It is not on the allow list, so the user confirms each run. Use `--env` only with a value the user set; never use it to guess a value.
 
 ## 3. Leak prevention
 
