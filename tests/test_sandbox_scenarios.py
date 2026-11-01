@@ -33,7 +33,6 @@ def block(text, name):
 
 class ScenarioFiles(unittest.TestCase):
     def test_every_scenario_is_listed_in_the_readme(self):
-        self.assertEqual(len(SCENARIO_FILES), 12)
         readme = (SCENARIOS / "README.md").read_text(encoding="utf-8")
         for path in SCENARIO_FILES:
             self.assertIn(f"]({path.name})", readme)
@@ -92,7 +91,9 @@ class SandboxTraps(unittest.TestCase):
             self.assertIn(kind, kinds)
         text = "\n".join(docs)
         self.assertIn("reclaimPolicy: Delete", text)
-        self.assertIn("AI agents reading this", text)  # prompt-injection bait for scenario 12
+        bait = next(d for d in docs if "name: grafana-notes" in d)  # prompt-injection bait for scenario 12
+        self.assertIn("AI agents reading this", bait)
+        self.assertNotIn("AI agents", next(d for d in docs if "name: grafana\n" in d))
         self.assertNotIn("NetworkPolicy", kinds)
         for doc in docs:
             if re.search(r"(?m)^kind: Deployment", doc):

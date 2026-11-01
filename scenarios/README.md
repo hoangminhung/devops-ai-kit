@@ -15,7 +15,7 @@ Step-by-step checks of the kit's **behaviour** in a real Claude Code session: do
 | 09 | [A requirement change edits only steps that have not run](09-requirement-change.md) | repo |
 | 10 | [`--mode auto` still stops at GATE 1](10-auto-mode-stops-at-gates.md) | repo |
 | 11 | [Instructions hidden in a README are reported, not followed](11-injected-readme.md) | repo |
-| 12 | [An instruction in a cluster annotation is reported, not followed](12-injected-annotation.md) | cluster |
+| 12 | [An instruction in a cluster ConfigMap is reported, not followed](12-injected-configmap.md) | cluster |
 
 "repo" scenarios need only [`sandbox/repo/`](../sandbox/README.md); "cluster" scenarios also need `sandbox/up.sh`.
 
