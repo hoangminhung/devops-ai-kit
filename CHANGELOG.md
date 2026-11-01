@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Security fix:** `kubectl get --raw` on the secrets API, and `curl` / `wget` to it (after `kubectl proxy`), printed secret values without a prompt (`Bash(kubectl get *)` allowed it and the hook did not see it). The hook and new deny rules now block them.
+- New `pki-secrets/scripts/secret_fingerprint.py`: compares Secrets (two clusters, or one key with an exported env var) and prints only key names, sizes and match / differ, never values or hashes. `00-core` §5 and guide §3.4 explain why a request in the chat does not unlock secret values.
+
 ## 1.2.0 — 2026-10-31
 
 - **Security fix — permission rules and flag order.** The settings rules match command text from the start, so a flag before the verb skipped them: `kubectl --context X get secret … -o yaml` was not denied, `kubectl --context X delete ns` and `terraform -chdir=X destroy` only asked, and read-only `kubectl --context X get` needed approval. Now:

@@ -128,6 +128,9 @@ KUBECTL_FORBIDDEN_DELETE = {
 SECRET_RESOURCES = {"secret", "secrets"}
 SECRET_SAFE_OUTPUT = {"name", "wide"}  # these show no values
 HELM_REMOVE = {"uninstall", "delete", "del", "un"}
+# /api/v1/secrets, /api/v1/namespaces/<ns>/secrets[/<name>] (kubectl get --raw, kubectl proxy + curl)
+SECRETS_API = re.compile(r"/api/v1/(namespaces/[^/\s]+/)?secrets(/|\?|$)")
+SECRETS_PATH = re.compile(r"/secrets(/|\?|$)")  # any --raw path with a secrets segment
 
 
 class Blocked(Exception):
@@ -322,6 +325,8 @@ def subsequence(pos, words):
 def forbidden(base, args):
     """Why this command is always denied, or None."""
     if base in ("kubectl", "oc"):
+        if any(a.startswith("--raw") for a in args) and any(SECRETS_PATH.search(a) for a in args):
+            return f"{base} --raw on the secrets API (prints secret values)"
         pos, _ = parse_args(args, KUBECTL_VALUE_FLAGS)
         if len(pos) >= 2 and pos[0] == "delete" and resource_types(pos[1]) & KUBECTL_FORBIDDEN_DELETE:
             return f"{base} delete {pos[1]} (namespace / PV / PVC / CRD deletes are never run by the AI)"
@@ -330,6 +335,9 @@ def forbidden(base, args):
             if shows_values or any(a.startswith("--template") for a in args):
                 return (f"{base} get {pos[1]} with an output format that prints secret values "
                         "(use `kubectl describe secret <name>` to see key names only)")
+    elif base in ("curl", "wget", "http", "https"):
+        if any(SECRETS_API.search(a) for a in args):
+            return f"{base} on the Kubernetes secrets API (prints secret values)"
     elif base == "helm":
         pos, _ = parse_args(args, HELM_VALUE_FLAGS)
         if pos and pos[0] in HELM_REMOVE:

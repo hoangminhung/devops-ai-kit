@@ -25,6 +25,8 @@
       "Bash(helm * delete*)",
       "Bash(kubectl get secret*-o*)",
       "Bash(kubectl * get secret*-o*)",
+      "Bash(kubectl get --raw*/secrets*)",
+      "Bash(kubectl * get --raw*/secrets*)",
       "Bash(az keyvault secret show*)",
       "Bash(az keyvault secret download*)",
       "Bash(aws secretsmanager get-secret-value*)",

@@ -133,6 +133,10 @@ class ForbiddenCommands(HookTestCase):
         "gcloud --project p secrets versions access latest --secret db",
         "bash -c 'kubectl --context x delete pvc data'",
         "kubectl get pods && kubectl --context x delete ns shop",
+        "kubectl --context x get --raw /api/v1/namespaces/shop/secrets/db",
+        "kubectl get --raw=/api/v1/secrets",
+        "curl -s http://127.0.0.1:8001/api/v1/namespaces/shop/secrets/db",
+        "wget -qO- http://localhost:8001/api/v1/secrets?limit=1",
     ]
     ALLOWED = [
         "kubectl get secret -o name",
@@ -140,6 +144,9 @@ class ForbiddenCommands(HookTestCase):
         "kubectl get secretstores -o yaml",
         "kubectl --context x describe secret db",
         "terraform -chdir=envs/prod plan -destroy",
+        "kubectl get --raw /api/v1/namespaces/shop/pods",
+        "kubectl get --raw /apis/secrets-store.csi.x-k8s.io/v1/secretproviderclasses",
+        "curl -s http://127.0.0.1:8001/api/v1/namespaces/shop/configmaps",
     ]
 
     def test_denied_in_any_flag_order(self):
