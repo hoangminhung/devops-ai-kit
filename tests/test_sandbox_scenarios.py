@@ -171,7 +171,7 @@ class Lib(unittest.TestCase):
 
     def run_lib(self, expression):
         with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as fh:
-            fh.write("\n".join(json.dumps(e) for e in self.EVENTS) + "\n")
+            fh.write("\n".join(e if isinstance(e, str) else json.dumps(e) for e in self.EVENTS) + "\n")
             log = fh.name
         try:
             result = subprocess.run(["bash", "-c", f"source '{SCENARIOS / 'lib.sh'}'; {expression}"],
@@ -189,6 +189,12 @@ class Lib(unittest.TestCase):
         self.assertEqual(self.run_lib("final_text"), "Stopped at GATE 1.")
         self.assertEqual(self.run_lib("written_text"), "## Environment registry")
         self.assertEqual(json.loads(self.run_lib("metrics"))["prompts"], 1)
+
+    @unittest.skipUnless(shutil.which("jq"), "jq not installed")
+    def test_a_non_json_line_in_the_log_does_not_break_the_helpers(self):
+        self.EVENTS = [*Lib.EVENTS[:1], "warning: not json", *Lib.EVENTS[1:]]
+        self.assertEqual(self.run_lib("final_text"), "Stopped at GATE 1.")
+        self.assertEqual(json.loads(self.run_lib("metrics"))["prompts"], 1)
         self.assertIn("make apply e=prod", self.run_lib("denied_tools"))
 
 
@@ -199,19 +205,24 @@ echo '{"type":"assistant","message":{"usage":{"input_tokens":10,"cache_creation_
 echo '{"type":"result","result":"done","total_cost_usd":0.25,"num_turns":3,"permission_denials":[{"tool_name":"Bash","tool_input":{"command":"x"}}]}'
 """
 
-    def test_refuses_the_real_config_dir(self):
+    def refuse(self, home, config_dir):
+        env = dict(os.environ, HOME=home)
+        env.pop("CLAUDE_CONFIG_DIR", None)
+        return subprocess.run([str(SCENARIOS / "benchmark.sh"), "--config-dir", config_dir],
+                              env=env, capture_output=True, text=True, timeout=60)
+
+    def test_refuses_the_real_config_dir_also_through_links_and_nesting(self):
         with tempfile.TemporaryDirectory() as home:
-            Path(home, ".claude").mkdir()
-            env = dict(os.environ, HOME=home)
-            env.pop("CLAUDE_CONFIG_DIR", None)
-            result = subprocess.run([str(SCENARIOS / "benchmark.sh"), "--config-dir", f"{home}/.claude"],
-                                    env=env, capture_output=True, text=True, timeout=60)
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("refusing to use your real Claude config dir", result.stderr)
+            Path(home, ".claude/sub").mkdir(parents=True)
+            Path(home, "link").symlink_to(Path(home, ".claude"))
+            for config_dir in (f"{home}/.claude", f"{home}/link", f"{home}/.claude/sub", home):
+                with self.subTest(config_dir=config_dir):
+                    result = self.refuse(home, config_dir)
+                    self.assertEqual(result.returncode, 2)
+                    self.assertIn("refusing to use your real Claude config dir", result.stderr)
 
     @unittest.skipUnless(shutil.which("jq"), "jq not installed")
     def test_runs_both_modes_and_writes_a_table(self):
-        before = set(SCENARIOS.glob(".runs/05-*"))
         with tempfile.TemporaryDirectory() as tmp:
             claude = Path(tmp, "claude")
             claude.write_text(self.FAKE_CLAUDE)
@@ -228,14 +239,30 @@ echo '{"type":"result","result":"done","total_cost_usd":0.25,"num_turns":3,"perm
             table = out.read_text()
             tsv = out.with_suffix(".tsv").read_text().splitlines()
             self.assertFalse((bench / ".devops-kit-manifest.json").exists())  # uninstalled at the end
+        runs = Path(re.search(r"Work copies and logs: (\S+)", result.stderr).group(1))
+        try:
+            self.assertFalse(str(runs).startswith(str(Path.home())))  # outside $HOME: no parent CLAUDE.md
+            copies = sorted(runs.glob("05-*/repo"))
+            self.assertEqual(len(copies), 2)
+            self.assertFalse((copies[0] / ".claude/skills").exists())  # baseline: no kit skill copied
+        finally:
+            shutil.rmtree(runs, ignore_errors=True)
         self.assertEqual(len(tsv), 5)  # header + 2 modes x 2 scenarios
         self.assertIn("| scenarios passed |", table)
         self.assertIn("| 01 | skip | skip |", table)  # cluster scenario while the sandbox is down
         self.assertIn("1 prompts · $0.25", table)
         self.assertIn("| context of the first request (avg tokens) | 1010 | 1010 |", table)
-        for run in set(SCENARIOS.glob(".runs/05-*")) - before:
-            shutil.rmtree(run, ignore_errors=True)
+        self.assertIn("Kit version: ", table)
 
+    def test_unknown_scenario_is_refused_before_spending(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "bench").mkdir()
+            env = dict(os.environ, HOME=tmp)
+            env.pop("CLAUDE_CONFIG_DIR", None)
+            result = subprocess.run([str(SCENARIOS / "benchmark.sh"), "--config-dir", f"{tmp}/bench", "--scenarios", "99"],
+                                    env=env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("unknown scenario: 99", result.stderr)
 
 if __name__ == "__main__":
     unittest.main()

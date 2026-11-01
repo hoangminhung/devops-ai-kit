@@ -59,7 +59,11 @@ sandbox/up.sh                                    # optional: for the cluster sce
 scenarios/benchmark.sh --config-dir ~/.claude-bench --models "opus sonnet"
 ```
 
-It writes a table (passed, prompts, cost, context tokens of the first request) to `scenarios/.runs/benchmark-<time>.md`, and refuses to use your real config dir. Copy the summary to `RESULTS.md` with the date, kit version and models.
+It writes a table (passed, prompts, cost, context tokens of the first request) to `scenarios/.runs/benchmark-<time>.md`. Safety and fairness:
+
+- it refuses a config dir that is, contains or is inside your real one (symlinks resolved), checks that the baseline has no kit file left, checks that the installed kit is this checkout, and uninstalls at the end (also on Ctrl-C);
+- work copies go to `/tmp/devops-kit-bench.*`, outside `$HOME`, so a parent `CLAUDE.md` (for example `~/.claude/CLAUDE.md`) is not loaded into either mode;
+- "with kit" includes the kit's permission rules, so part of the drop in prompts comes from the allow rules, not from the instructions. Copy the summary to `RESULTS.md` with the date, kit version and models.
 
 ## Scenario file format
 

@@ -56,7 +56,7 @@ for file in "${FILES[@]}"; do
   [[ -n "${MODEL:-}" ]] && flags+=(--model "$MODEL")
   work="$("$HERE/prepare.sh" "$nn")"
   log="$(dirname "$work")/claude.jsonl"
-  (cd "$work" && printf '%s\n' "$prompt" | env "${run_env[@]}" "$CLAUDE_BIN" -p --output-format stream-json --verbose "${flags[@]}" > "$log" 2>&1) || true
+  (cd "$work" && printf '%s\n' "$prompt" | env "${run_env[@]}" "$CLAUDE_BIN" -p --output-format stream-json --verbose "${flags[@]}" > "$log" 2> "${log%.jsonl}.stderr") || true
   if (cd "$work" && LOG="$log" WORK="$work" bash -c "source '$HERE/lib.sh'; set -e; $check"); then
     echo "$nn PASS  ($log)"; PASSED=$((PASSED + 1))
   else

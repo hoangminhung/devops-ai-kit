@@ -11,6 +11,8 @@
 #   (copied, not linked: Claude Code does not read files through links that point outside the project).
 #   To test a branch, install it first (into a test config dir is safest; see scenarios/README.md).
 # - PREPARE_NO_KIT=1: copy no kit skills (baseline run without the kit, used by benchmark.sh).
+# - SCENARIO_RUNS_DIR: where work copies go (default scenarios/.runs). benchmark.sh puts them outside
+#   $HOME, so CLAUDE.md files of parent folders (e.g. ~/.claude/CLAUDE.md) are not loaded.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -19,11 +21,13 @@ NN="${1:?usage: scenarios/prepare.sh <NN>}"
 SCENARIO="$(find "$HERE" -maxdepth 1 -name "${NN}-*.md" | head -1)"
 [[ -n "$SCENARIO" ]] || { echo "No scenario file $HERE/${NN}-*.md" >&2; exit 1; }
 
-RUN="$HERE/.runs/${NN}-$(date +%Y%m%d-%H%M%S)"
-n=1
-while [[ -e "$RUN" ]]; do RUN="${RUN%-[0-9]}-$n"; n=$((n + 1)); done  # two runs in the same second
+RUNS="${SCENARIO_RUNS_DIR:-$HERE/.runs}"
+mkdir -p "$RUNS"
+BASE="$RUNS/${NN}-$(date +%Y%m%d-%H%M%S)"
+RUN="$BASE" n=1
+until mkdir "$RUN" 2>/dev/null; do RUN="$BASE-$n"; n=$((n + 1)); done  # two runs in the same second
 WORK="$RUN/repo"
-mkdir -p "$WORK"
+mkdir "$WORK"
 cp -a "$KIT/sandbox/repo/." "$WORK/"
 FIXTURE="$(sed -n 's/^- \*\*Fixture:\*\* `\([a-z0-9-]*\)`.*/\1/p' "$SCENARIO")"
 if [[ -n "$FIXTURE" ]]; then
