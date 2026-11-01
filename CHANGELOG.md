@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **Security fix:** several reads printed secret values without a prompt, because `Bash(kubectl get *)` allowed them and the hook did not see them: `kubectl get --raw` on the secrets API (also URL-encoded), joined short flags (`-Ao yaml`), value flags before the resource (`--sort-by x secret`), objects from `-f` / `-k`, log level `-v` ≥ 6, and `curl` / `wget` to the API after `kubectl proxy`. The hook now parses these like kubectl does and denies them; it also denies `oc extract`, `kubectl view-secret`, `apply view-last-applied` on a Secret, `helm get values|manifest|all` and `helm status -o json|yaml`. `kubectl get -f/-k … -o yaml` and a `get` whose resource is set by the shell (`$POD`, `{a,b}`, a glob) ask with a warning, because they may be Secrets.
+- Hook: commands after shell keywords (`for …; do …; done`, `if …; then`, `{ …; }`, `( … )`, `! …`) were not checked at all; they are now, so a forbidden command inside a loop is denied too.
+- Settings: the secret deny rules no longer match `-n mongodb-operator` (they needed `-o` anywhere; now ` -o` / ` --output`), and the `--raw` rule no longer matches `secrets-store` paths.
+- New `pki-secrets/scripts/secret_fingerprint.py`: compares Secrets (two clusters, or one key with an exported env var) and prints only key names, sizes and match / differ, never values or hashes. `00-core` §5 and guide §3.4 explain why a request in the chat does not unlock secret values.
+
 ## 1.2.0 — 2026-10-31
 
 - **Security fix — permission rules and flag order.** The settings rules match command text from the start, so a flag before the verb skipped them: `kubectl --context X get secret … -o yaml` was not denied, `kubectl --context X delete ns` and `terraform -chdir=X destroy` only asked, and read-only `kubectl --context X get` needed approval. Now:

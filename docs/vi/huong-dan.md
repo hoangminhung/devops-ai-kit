@@ -270,6 +270,22 @@ Xem [cloud-readonly.md](cloud-readonly.md). Tóm tắt:
 
 Đặt thêm `--env DEVOPS_KIT_BLOCK_PROD=1`. Hook sẽ **từ chối** (thay vì hỏi) mọi lệnh mutating mà tên đích (context, namespace, tên file kubeconfig, workspace, …) khớp mẫu production (`prod`, `prd`, `production`, `live`). Claude sẽ được báo là phải chuẩn bị PR GitOps hoặc đưa lệnh cho bạn tự chạy. Đổi mẫu nhận diện bằng `--env DEVOPS_KIT_PROD_PATTERN='<regex>'`.
 
+### 3.4. Đối chiếu giá trị secret mà không hiện giá trị
+
+Kit chặn các cách đã biết để Claude in giá trị secret, kể cả khi bạn yêu cầu trong chat (`get secret -o yaml` dù cờ đứng ở đâu, `--raw`, `-f`/`-k` kèm định dạng output, `-v` ≥ 6, `oc extract`, `helm get values`, `curl` vào API). Lớp bảo vệ thật vẫn là định danh read-only không có quyền đọc Secret (§3.1). Hook không phân biệt được yêu cầu đến từ bạn hay từ chữ Claude vừa đọc (log, README). Giá trị đã in ra còn nằm lại trong transcript trên đĩa (`~/.claude/projects/`) và được gửi tới model.
+
+Phần lớn trường hợp bạn chỉ cần **đối chiếu**. Nhờ Claude dùng `secret_fingerprint.py` (skill `pki-secrets`). Script chỉ in tên key, kích thước và match / differ, không in giá trị. Script không nằm trong danh sách allow nên mỗi lần chạy bạn sẽ được hỏi xác nhận:
+
+```text
+so sánh shop/db-credentials trên aks-prod-ro với aks-stg-ro
+→ password: differ (only a trailing newline)
+→ username: match
+```
+
+Muốn kiểm tra một giá trị bạn đang có: export nó trong shell trước khi mở Claude (`export EXPECTED_DB_PW=...`), rồi nhờ Claude so `password` với `EXPECTED_DB_PW`.
+
+Nếu thật sự cần xem giá trị, chạy lệnh trong terminal của bạn. Tiền tố `!` trong Claude Code cũng chạy lệnh với quyền của bạn, nhưng kết quả sẽ vào chat và transcript.
+
 ---
 
 ## 4. Thiết lập cho từng project

@@ -270,6 +270,22 @@ See [cloud-readonly.md](cloud-readonly.md). Summary:
 
 Add `--env DEVOPS_KIT_BLOCK_PROD=1`. The hook will **deny** (instead of ask) every mutating command whose target name (context, namespace, kubeconfig file name, workspace, …) matches the production pattern (`prod`, `prd`, `production`, `live`). Claude is told to prepare a GitOps PR or give you the command to run yourself. Change the pattern with `--env DEVOPS_KIT_PROD_PATTERN='<regex>'`.
 
+### 3.4. Compare secret values without showing them
+
+The kit blocks the known ways for Claude to print a secret value, even if you ask in the chat (`get secret -o yaml` in any flag order, `--raw`, `-f`/`-k` with an output format, `-v` ≥ 6, `oc extract`, `helm get values`, `curl` to the API). The read-only identity without Secret access (§3.1) is still the real protection. The hook cannot tell if a request came from you or from text Claude read (a log, a README). A printed value also stays in the session transcript on disk (`~/.claude/projects/`) and is sent to the model.
+
+Most of the time you only need to **compare**. Ask Claude to use `secret_fingerprint.py` (skill `pki-secrets`). It prints key names, sizes and match / differ, never the value. It is not on the allow list, so you confirm each run:
+
+```text
+compare shop/db-credentials on aks-prod-ro with aks-stg-ro
+→ password: differ (only a trailing newline)
+→ username: match
+```
+
+To check a value you have, export it in your shell before you start Claude (`export EXPECTED_DB_PW=...`) and ask Claude to compare `password` with `EXPECTED_DB_PW`.
+
+If you really need to see a value, run the command in your own terminal. The `!` prefix in Claude Code also runs it as you, but the output then goes into the chat and the transcript.
+
 ---
 
 ## 4. Set up each project
