@@ -27,6 +27,7 @@ while [[ $# -gt 0 ]]; do
 done
 [[ -n "$CONFIG_DIR" ]] || { echo "--config-dir is required (a separate, logged-in Claude config dir)" >&2; exit 2; }
 CONFIG_DIR="$(cd "$CONFIG_DIR" 2>/dev/null && pwd -P)" || { echo "config dir does not exist" >&2; exit 2; }
+[[ "$CONFIG_DIR" != / ]] || { echo "refusing to use / as the config dir" >&2; exit 2; }
 for real in "$HOME/.claude" "${CLAUDE_CONFIG_DIR:-}"; do
   [[ -n "$real" && -d "$real" ]] || continue
   real="$(cd "$real" && pwd -P)"
@@ -53,12 +54,17 @@ RUNS="$(mktemp -d /tmp/devops-kit-bench.XXXXXX)"
 printf 'mode\tmodel\tscenario\tresult\tprompts\tcost\tturns\tcontext\tlog\n' > "$TSV"
 
 uninstall_kit() { CLAUDE_CONFIG_DIR="$CONFIG_DIR" "$KIT/uninstall.sh" >/dev/null 2>&1 || true; }
-trap uninstall_kit EXIT INT TERM
+trap uninstall_kit EXIT
+trap 'exit 130' INT   # stop here: the EXIT trap uninstalls; never go on with a "kit" column without the kit
+trap 'exit 143' TERM
 
 assert_no_kit() {
   local left=()
   for skill in "$KIT"/claude/skills/*/; do
     [[ -e "$CONFIG_DIR/skills/$(basename "$skill")" ]] && left+=("skills/$(basename "$skill")")
+  done
+  for agent in "$KIT"/claude/agents/*.md; do
+    [[ -e "$CONFIG_DIR/agents/$(basename "$agent")" ]] && left+=("agents/$(basename "$agent")")
   done
   for path in rules/devops-kit hooks/devops-kit .devops-kit-manifest.json; do
     [[ -e "$CONFIG_DIR/$path" ]] && left+=("$path")
@@ -82,7 +88,9 @@ installed = json.load(open(sys.argv[1])).get("kit_version")
 sys.exit(0 if installed == sys.argv[2] else f"installed kit {installed} is not this checkout ({sys.argv[2]})")
 PY
   fi
-  for model in $MODELS; do
+  local models
+  read -r -a models <<<"$MODELS"
+  for model in "${models[@]}"; do
     for nn in $SCENARIOS; do
       line="$({ CLAUDE_CONFIG_DIR="$CONFIG_DIR" MODEL="$model" PREPARE_NO_KIT="$no_kit" SCENARIO_RUNS_DIR="$RUNS" \
         "$HERE/run-headless.sh" "$nn" 2>>"$RUNS/errors.log" || true; } | grep -E "^$nn (PASS|FAIL|SKIP)" | head -1 || true)"

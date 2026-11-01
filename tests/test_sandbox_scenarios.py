@@ -254,6 +254,35 @@ echo '{"type":"result","result":"done","total_cost_usd":0.25,"num_turns":3,"perm
         self.assertIn("| context of the first request (avg tokens) | 1010 | 1010 |", table)
         self.assertIn("Kit version: ", table)
 
+    @unittest.skipUnless(shutil.which("jq"), "jq not installed")
+    def test_stops_and_uninstalls_on_term(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            claude = Path(tmp, "claude")
+            claude.write_text("#!/bin/sh\ncat > /dev/null\nsleep 4\n")
+            claude.chmod(0o755)
+            bench = Path(tmp, "bench")
+            bench.mkdir()
+            out = Path(tmp, "result.md")
+            env = dict(os.environ, HOME=tmp, CLAUDE_BIN=str(claude))
+            env.pop("CLAUDE_CONFIG_DIR", None)
+            proc = subprocess.Popen([str(SCENARIOS / "benchmark.sh"), "--config-dir", str(bench), "--models", "fake",
+                                     "--scenarios", "05", "--out", str(out)], env=env,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            tsv = out.with_suffix(".tsv")
+            for _ in range(100):  # wait until the kit run has started
+                if (bench / ".devops-kit-manifest.json").exists() or proc.poll() is not None:
+                    break
+                import time
+                time.sleep(0.2)
+            import signal
+            proc.send_signal(signal.SIGTERM)
+            proc.communicate(timeout=60)
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertFalse(out.exists())
+            self.assertFalse((bench / ".devops-kit-manifest.json").exists())
+            lines = tsv.read_text().splitlines() if tsv.exists() else []
+            self.assertFalse(any(line.startswith("kit\t") for line in lines))
+
     def test_unknown_scenario_is_refused_before_spending(self):
         with tempfile.TemporaryDirectory() as tmp:
             Path(tmp, "bench").mkdir()
