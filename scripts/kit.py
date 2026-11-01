@@ -17,6 +17,7 @@ import datetime as dt
 import json
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -212,6 +213,28 @@ def add_settings(settings, fragment, env_pairs):
     return settings, added
 
 
+def release_warnings(kit_dir):
+    """Warnings about the source being installed: not a release tag, or a tag that is not signed."""
+    def git(*cmd):
+        try:
+            return subprocess.run(["git", "-C", str(kit_dir), *cmd], capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            return None
+    inside = git("rev-parse", "--is-inside-work-tree")
+    if inside is None or inside.returncode != 0:
+        return []  # not a git checkout (e.g. a downloaded archive): nothing to check
+    tag = git("describe", "--tags", "--exact-match", "HEAD")
+    if tag is None or tag.returncode != 0:
+        return ["WARNING: this checkout is not a release tag. For daily use, install a release: "
+                "`git checkout <tag>` (see the GitHub releases page), then run ./install.sh again."]
+    name = tag.stdout.strip()
+    verify = git("verify-tag", name)
+    if verify is None or verify.returncode != 0:
+        return [f"WARNING: tag {name} is not signed, or its signature cannot be checked here "
+                f"(`git verify-tag {name}`). See {GUIDE} §9 to verify releases."]
+    return []
+
+
 def install(args):
     ops = Ops(args.dry_run)
     ts = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -226,6 +249,8 @@ def install(args):
     lang = args.lang or manifest.get("lang") or DEFAULT_LANG
 
     print(f"devops-ai-kit {VERSION} → {CLAUDE_DIR} (output language: {lang})")
+    for warning in release_warnings(KIT_DIR):
+        print(warning)
     # 1. Remove what a previous install of the kit put there.
     for rel in sorted(previous_items):
         ops.remove(CLAUDE_DIR / rel)

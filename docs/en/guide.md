@@ -85,6 +85,7 @@ Do this on the **Ubuntu jump host** (the VS Code terminal after you SSH in). Ins
 ```bash
 # 1. Get the kit onto the server
 git clone https://github.com/hoangminhung/devops-ai-kit.git ~/devops-ai-kit && cd ~/devops-ai-kit
+git checkout "$(git describe --tags --abbrev=0)"   # the latest release, not the main branch
 
 # 2. Preview what will change (writes nothing)
 ./install.sh --dry-run
@@ -192,11 +193,11 @@ Windows notes:
 - **Keep both installs in sync.** Clone the same repo on both machines. For each update:
 
   ```bash
-  git pull && ./install.sh        # Ubuntu
+  git fetch --tags && git checkout "$(git describe --tags --abbrev=0 origin/main)" && ./install.sh        # Ubuntu
   ```
 
   ```powershell
-  git pull; py -3 scripts\kit.py install    # Windows
+  git fetch --tags; git checkout (git describe --tags --abbrev=0 origin/main); py -3 scripts\kit.py install    # Windows
   ```
 
 ---
@@ -205,7 +206,7 @@ Windows notes:
 
 ```bash
 cd ~/devops-ai-kit
-git pull                # get the new version (or edit the kit content), then:
+git fetch --tags && git checkout "$(git describe --tags --abbrev=0 origin/main)"   # the latest release
 ./install.sh            # update: remove the old kit files, install the new ones, keep the earlier --lang and env
 ./install.sh --lang vi  # change the output language
 ./uninstall.sh          # remove all kit files + every line the kit added to settings.json
@@ -526,6 +527,11 @@ A long session is compacted many times, and each time some details can be lost. 
   - layer 2, optional: `sandbox/up.sh` creates a kind cluster with traps (ingress-nginx, a `Delete` StorageClass, a fake Secret, a `sandbox-prod` context and a read-only `-ro` context), using its own kubeconfig, never `~/.kube/config`;
   - `scenarios/prepare.sh <NN>` makes a fresh work copy; `scenarios/run-headless.sh` runs the scenarios that have a check block with `claude -p` (costs tokens, not in CI).
   - Scenarios test the kit **installed** in your Claude config dir: an installed skill wins over a project copy with the same name. To test a branch, install it into a separate `CLAUDE_CONFIG_DIR`.
+- **Releases.** The kit runs a Python hook before every Bash command on machines that can reach production, so install only what was released:
+  - install a tag, not `main`. `./install.sh` warns when the checkout is not a release tag, or when the tag's signature cannot be checked;
+  - releases are signed tags. To check one: `git verify-tag <tag>`. GitHub also shows **Verified** on the tag. For `git verify-tag` with an SSH key, add the maintainer's public key to an allowed-signers file once: `echo "hoangminhung@gmail.com <public key>" >> ~/.config/git/allowed_signers && git config --global gpg.ssh.allowedSignersFile ~/.config/git/allowed_signers`;
+  - maintainer, once: `git config gpg.format ssh`, `git config user.signingkey ~/.ssh/<key>.pub`, `git config tag.gpgSign true`, and add the same key on GitHub as a **Signing key** (Settings → SSH and GPG keys). Then `git tag -s vX.Y.Z -m vX.Y.Z`.
+- **Staleness:** `python3 scripts/validate.py` warns about files whose `Last reviewed` date is older than 183 days, and a monthly workflow (`.github/workflows/staleness.yml`) fails on them, so GitHub emails the owner.
 - Keep the kit in git, with one clear commit per change. To use it on another server or share it with a team, clone it and run `./install.sh`.
 
 ---

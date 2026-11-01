@@ -23,6 +23,7 @@ Hướng dẫn đầy đủ: [docs/vi/huong-dan.md](docs/vi/huong-dan.md) · Thu
 
 ```bash
 git clone https://github.com/hoangminhung/devops-ai-kit.git ~/devops-ai-kit && cd ~/devops-ai-kit
+git checkout "$(git describe --tags --abbrev=0)"   # bản release mới nhất, không phải nhánh main
 ./install.sh --dry-run --lang vi   # xem trước, không ghi gì
 ./install.sh --lang vi             # cài vào ~/.claude, tài liệu và báo cáo viết tiếng Việt
 ./check.sh                         # trạng thái, ngôn ngữ đầu ra, công cụ gate nào đã có
@@ -73,7 +74,7 @@ devops-ai-kit/
 
 ## Cập nhật / gỡ cài
 
-Sửa file trong repo này (không sửa trong `~/.claude`), hoặc `git pull`, rồi chạy lại `./install.sh`. `./uninstall.sh` gỡ mọi thứ kit đã thêm, kể cả các dòng trong `settings.json`. Nếu bạn không sửa `settings.json` sau khi cài, file được trả về đúng từng byte như ban đầu.
+Sửa file trong repo này (không sửa trong `~/.claude`), hoặc checkout bản release mới hơn (`git fetch --tags && git checkout <tag>`), rồi chạy lại `./install.sh`. `./install.sh` cảnh báo khi bản checkout không phải tag release hoặc tag chưa được ký. `./uninstall.sh` gỡ mọi thứ kit đã thêm, kể cả các dòng trong `settings.json`. Nếu bạn không sửa `settings.json` sau khi cài, file được trả về đúng từng byte như ban đầu.
 
 ## Đóng góp / Kiểm thử kit
 

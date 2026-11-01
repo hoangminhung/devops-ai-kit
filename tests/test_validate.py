@@ -60,6 +60,27 @@ class FlagFirstRules(unittest.TestCase):
         self.assertEqual(validate.missing_twins(permissions), ["deny: Bash(kubectl * delete ns *)"])
 
 
+class StaleReviews(unittest.TestCase):
+    def test_old_review_dates_are_reported(self):
+        import datetime as dt
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = Path(tmp)
+            (kit / "claude/skills/a").mkdir(parents=True)
+            (kit / "claude/skills/a/SKILL.md").write_text("<!-- devops-ai-kit · Last reviewed: 2026-01-01 -->\n")
+            (kit / "claude/skills/b.md").write_text("<!-- devops-ai-kit · Last reviewed: 2026-10-01 -->\n")
+            (kit / "claude/skills/c.md").write_text("no date\n")
+            stale = validate.stale_reviews(kit, dt.date(2026, 11, 1), 183)
+        self.assertEqual(stale, [(Path("claude/skills/a/SKILL.md"), "2026-01-01")])
+
+    def test_fail_on_stale_flag(self):
+        result = subprocess.run([sys.executable, str(SCRIPT), "--stale-days", "0", "--fail-on-stale"],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("WARNING claude/", result.stdout)
+        result = subprocess.run([sys.executable, str(SCRIPT), "--stale-days", "0"], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0)  # warnings only
+
+
 class WholeKit(unittest.TestCase):
     def test_validate_passes_on_this_repo(self):
         result = subprocess.run([sys.executable, str(SCRIPT)], capture_output=True, text=True)

@@ -85,6 +85,7 @@ Làm trên **máy chủ Ubuntu trung gian** (terminal của VS Code sau khi SSH 
 ```bash
 # 1. Lấy kit về server
 git clone https://github.com/hoangminhung/devops-ai-kit.git ~/devops-ai-kit && cd ~/devops-ai-kit
+git checkout "$(git describe --tags --abbrev=0)"   # bản release mới nhất, không phải nhánh main
 
 # 2. Xem trước những gì sẽ thay đổi (không ghi gì cả)
 ./install.sh --dry-run --lang vi
@@ -192,11 +193,11 @@ Lưu ý riêng cho Windows:
 - **Hai bản cài phải đồng bộ.** Clone cùng một repo về cả hai máy. Mỗi lần cập nhật:
 
   ```bash
-  git pull && ./install.sh        # Ubuntu
+  git fetch --tags && git checkout "$(git describe --tags --abbrev=0 origin/main)" && ./install.sh        # Ubuntu
   ```
 
   ```powershell
-  git pull; py -3 scripts\kit.py install    # Windows
+  git fetch --tags; git checkout (git describe --tags --abbrev=0 origin/main); py -3 scripts\kit.py install    # Windows
   ```
 
 ---
@@ -205,7 +206,7 @@ Lưu ý riêng cho Windows:
 
 ```bash
 cd ~/devops-ai-kit
-git pull                # lấy bản mới (hoặc sửa nội dung kit), rồi:
+git fetch --tags && git checkout "$(git describe --tags --abbrev=0 origin/main)"   # bản release mới nhất
 ./install.sh            # cập nhật: gỡ bản cũ của kit, cài bản mới, giữ nguyên --lang và env đã đặt trước đó
 ./install.sh --lang en  # đổi ngôn ngữ đầu ra
 ./uninstall.sh          # gỡ toàn bộ file + mọi dòng kit đã thêm vào settings.json
@@ -526,6 +527,11 @@ Một phiên chạy lâu sẽ bị nén ngữ cảnh nhiều lần, mỗi lần 
   - lớp 2, tùy chọn: `sandbox/up.sh` tạo cluster kind có sẵn các "bẫy" (ingress-nginx, StorageClass `Delete`, Secret giả, context `sandbox-prod` và context read-only `-ro`), dùng kubeconfig riêng, không đụng `~/.kube/config`;
   - `scenarios/prepare.sh <NN>` tạo bản sao làm việc mới; `scenarios/run-headless.sh` chạy các scenario có khối check bằng `claude -p` (tốn token, không nằm trong CI).
   - Scenario kiểm thử bản kit **đang cài** trong thư mục cấu hình Claude: skill đã cài được ưu tiên hơn bản cùng tên trong project. Muốn thử một branch thì cài nó vào một `CLAUDE_CONFIG_DIR` riêng.
+- **Release.** Kit chạy một hook Python trước mọi lệnh Bash trên máy có quyền vào production, nên chỉ cài bản đã release:
+  - cài theo tag, không cài `main`. `./install.sh` cảnh báo khi bản checkout không phải tag release, hoặc không kiểm tra được chữ ký của tag;
+  - release là tag có ký. Kiểm tra bằng `git verify-tag <tag>`; GitHub cũng hiện **Verified** trên tag. Để `git verify-tag` dùng được với SSH key, thêm public key của người bảo trì vào file allowed-signers một lần: `echo "hoangminhung@gmail.com <public key>" >> ~/.config/git/allowed_signers && git config --global gpg.ssh.allowedSignersFile ~/.config/git/allowed_signers`;
+  - người bảo trì, làm một lần: `git config gpg.format ssh`, `git config user.signingkey ~/.ssh/<key>.pub`, `git config tag.gpgSign true`, và thêm đúng key đó trên GitHub dưới dạng **Signing key** (Settings → SSH and GPG keys). Sau đó `git tag -s vX.Y.Z -m vX.Y.Z`.
+- **Kiến thức cũ:** `python3 scripts/validate.py` cảnh báo các file có `Last reviewed` cũ hơn 183 ngày, và một workflow hằng tháng (`.github/workflows/staleness.yml`) sẽ fail với các file đó, để GitHub gửi email cho chủ repo.
 - Giữ kit trong git; mỗi thay đổi một commit có message rõ ràng. Đem sang server khác hoặc chia sẻ cho team chỉ cần clone rồi `./install.sh`.
 
 ---

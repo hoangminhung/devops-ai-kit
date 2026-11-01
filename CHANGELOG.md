@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Release integrity: install a release tag, not `main` (README and guide now `git checkout` the latest tag); `./install.sh` warns when the checkout is not a release tag or the tag's signature cannot be checked. Guide §9 explains how to verify signed tags and how the maintainer signs them with an SSH key.
+- `validate.py` warns about rules and skills whose `Last reviewed` date is older than 183 days (`--stale-days`, `--fail-on-stale`); a monthly workflow fails on them so the owner gets an email.
+
 ## 1.2.0 — 2026-10-31
 
 - **Security fix — permission rules and flag order.** The settings rules match command text from the start, so a flag before the verb skipped them: `kubectl --context X get secret … -o yaml` was not denied, `kubectl --context X delete ns` and `terraform -chdir=X destroy` only asked, and read-only `kubectl --context X get` needed approval. Now:
