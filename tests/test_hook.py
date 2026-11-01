@@ -9,6 +9,7 @@ Run: python3 -m unittest discover -s tests -v
 """
 import json
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -52,10 +53,12 @@ class HookTestCase(unittest.TestCase):
         cls.tmp.cleanup()
 
     def run_hook(self, command, tool="Bash", env=None, raw_input=None, encoding=None):
-        environ = {"PATH": self.path, "HOME": str(self.home)}
+        # Most tests check the "ask" text, so production blocking (on by default) is off here.
+        environ = {"PATH": self.path, "HOME": str(self.home), "DEVOPS_KIT_BLOCK_PROD": "0"}
         if encoding:
             environ["PYTHONIOENCODING"] = encoding
         environ.update(env or {})
+        environ = {k: v for k, v in environ.items() if v is not None}  # env={"X": None} removes X
         payload = raw_input if raw_input is not None else json.dumps(
             {"tool_name": tool, "tool_input": {"command": command}, "cwd": str(self.workdir)}
         ).encode("utf-8")
@@ -133,13 +136,56 @@ class ForbiddenCommands(HookTestCase):
         "gcloud --project p secrets versions access latest --secret db",
         "bash -c 'kubectl --context x delete pvc data'",
         "kubectl get pods && kubectl --context x delete ns shop",
+        "kubectl --context x get --raw /api/v1/namespaces/shop/secrets/db",
+        "kubectl get --raw=/api/v1/secrets",
+        "curl -s http://127.0.0.1:8001/api/v1/namespaces/shop/secrets/db",
+        "wget -qO- http://localhost:8001/api/v1/secrets?limit=1",
+        # found by the independent review: short flags joined, value flags, files, encoding, log level
+        "kubectl get secrets -Ao yaml",
+        "kubectl get secret db -n x -Aojson",
+        "kubectl get --sort-by .metadata.name secret db -o yaml",
+        "kubectl get -L app secret db -o yaml",
+        "kubectl get --chunk-size 10 secret -o yaml",
+        "kubectl get --raw /api/v1/namespaces/x/%73ecrets/db",
+        "kubectl get -v=0 --raw /api/v1/namespaces/x/secrets#x",
+        "kubectl get secret db --sort-by=.metadata.name -v=9",
+        "oc extract secret/db --to=-",
+        "helm get values web",
+        "helm --kube-context x get manifest web",
+        "helm status web -o json",
+        "curl http://127.0.0.1:8001/api/v1/watch/namespaces/x/secrets",
+        "curl http://127.0.0.1:8001/api/v1/namespaces/x/%73ecrets/db",
+        # second review round
+        "kubectl get -o yaml -- secret db",
+        "kubectl get -oyaml -- secrets",
+        "helm status web -ojson",
+        "helm status web -oyaml -n x",
+        "kubectl get -v=0 --raw https://x/api/v1/namespaces/x/secrets/db",
+        "kubectl view-secret db --all",
+        "kubectl apply view-last-applied secret/db",
+        # shell keywords at the start of a segment (third review round)
+        "for x in 1; do kubectl get secret db -o yaml; done",
+        "if true; then kubectl get secret db -o yaml; fi",
+        "{ kubectl get secret db -o yaml; }",
+        "(kubectl get secret db -o yaml)",
+        "! kubectl get secret db -o yaml",
+        "for n in a b; do kubectl --context x delete ns $n; done",
     ]
     ALLOWED = [
         "kubectl get secret -o name",
         "kubectl --context x get secrets -o wide",
+        "kubectl get secrets -n mongodb-operator",
         "kubectl get secretstores -o yaml",
         "kubectl --context x describe secret db",
         "terraform -chdir=envs/prod plan -destroy",
+        "kubectl get --raw /api/v1/namespaces/shop/pods",
+        "kubectl get --raw /apis/secrets-store.csi.x-k8s.io/v1/secretproviderclasses",
+        "kubectl get -f deploy.yaml",
+        "kubectl get pods -o jsonpath={.items[*].metadata.name}",
+        "kubectl get pods -v=9",
+        "curl -s http://127.0.0.1:8001/api/v1/namespaces/shop/configmaps",
+        "helm status web",
+        "helm get notes web",
     ]
 
     def test_denied_in_any_flag_order(self):
@@ -154,6 +200,28 @@ class ForbiddenCommands(HookTestCase):
             with self.subTest(command=command):
                 self.assertNotEqual(self.decision(command)[0], "deny")
 
+    def test_allowed_commands_are_not_denied_by_settings_either(self):
+        """Simulates Claude Code rule matching: `*` matches any text, no `*` at the end means exact."""
+        settings = json.loads((KIT_DIR / "claude" / "settings.devops-kit.json").read_text(encoding="utf-8"))
+        rules = [re.compile(".*".join(map(re.escape, r[5:-1].split("*"))) + r"\Z")
+                 for r in settings["permissions"]["deny"] if r.startswith("Bash(")]
+        known_broad = {"kubectl get secret -o name", "kubectl --context x get secrets -o wide",
+                       "kubectl get secretstores -o yaml"}
+        for command in self.ALLOWED:
+            if command in known_broad:
+                continue  # documented in guide §8: the settings rule is broader than the hook
+            with self.subTest(command=command):
+                self.assertFalse(any(rule.match(command) for rule in rules))
+
+    def test_unknown_resources_ask_instead_of_deny(self):
+        for command in ("kubectl get -f k8s/secret.yaml -o yaml", "kubectl get -k overlays/prod -o yaml",
+                        "kubectl get pod $POD -o yaml", "kubectl get $'secret' db -o yaml",
+                        "kubectl get -n x {secret,} db -o yaml", "kubectl get secre? db -o yaml"):
+            with self.subTest(command=command):
+                decision, reason = self.decision(command)
+                self.assertEqual(decision, "ask")
+                self.assertIn("if it is a Secret, this shows its values", reason)
+
     def test_secret_deny_points_to_describe(self):
         self.assertIn("kubectl describe secret", self.decision("kubectl get secret db -o yaml")[1])
 
@@ -167,6 +235,7 @@ class ForbiddenCommands(HookTestCase):
             tool, _, rest = rule[5:-1].partition(" ")
             if rest.startswith(("* ", "-chdir=")):
                 continue  # flag-first twin of another rule
+            rest = rest.replace("--raw*", "--raw /api/v1/namespaces/x")  # kubectl wants the path right after --raw
             command = f"{tool} {flags[tool]} " + " ".join(rest.replace("*", " x ").split())
             with self.subTest(rule=rule, command=command):
                 self.assertEqual(self.decision(command)[0], "deny")
@@ -367,7 +436,15 @@ class EncodingAndSwitches(HookTestCase):
         decision, reason = self.decision("kubectl --context aks-prod-weu delete pod web-1",
                                          env={"DEVOPS_KIT_BLOCK_PROD": "1"})
         self.assertEqual(decision, "deny")
-        self.assertIn("DEVOPS_KIT_BLOCK_PROD=1", reason)
+        self.assertIn("DEVOPS_KIT_BLOCK_PROD=0 turns it off", reason)
+
+    def test_production_is_blocked_by_default(self):
+        decision, _ = self.decision("kubectl --context aks-prod-weu delete pod web-1",
+                                    env={"DEVOPS_KIT_BLOCK_PROD": None})
+        self.assertEqual(decision, "deny")
+        decision, _ = self.decision("kubectl --context kind-dev delete pod web-1",
+                                    env={"DEVOPS_KIT_BLOCK_PROD": None})
+        self.assertEqual(decision, "ask")
 
     def test_block_prod_still_asks_for_non_production(self):
         decision, _ = self.decision("kubectl delete pod web-1", env={"DEVOPS_KIT_BLOCK_PROD": "1"})
@@ -387,6 +464,123 @@ class EncodingAndSwitches(HookTestCase):
 
     def test_invalid_json_fails_open(self):
         self.assertEqual(self.run_hook(None, raw_input=b"not json"), b"")
+
+
+class DevPattern(HookTestCase):
+    """DEVOPS_KIT_DEV_PATTERN (opt-in): one simple command on a dev target needs no confirmation."""
+    ENV = {"DEVOPS_KIT_DEV_PATTERN": r"^(kind-|dev)"}
+
+    def test_single_command_on_dev_is_allowed(self):
+        decision, reason = self.decision("kubectl --context kind-dev -n app scale deploy/web --replicas=2", env=self.ENV)
+        self.assertEqual(decision, "allow")
+        self.assertIn("DEVOPS_KIT_DEV_PATTERN", reason)
+        self.assertEqual(self.decision("terraform apply tfplan", env=dict(self.ENV, TF_WORKSPACE="dev"))[0], "allow")
+
+    def test_still_asks_when_not_simple_or_not_dev(self):
+        for command in (
+            "kubectl --context kind-dev apply -f a.yaml && rm -r /tmp/x",
+            "kubectl --context kind-dev apply -f a.yaml; kubectl --context kind-dev delete pod x",
+            "kubectl --context kind-dev apply -f $(echo a.yaml)",
+            "bash -c 'kubectl --context kind-dev apply -f a.yaml'",
+            "kubectl --context aks-stg apply -f a.yaml",
+            "kubectl --context dev-ro apply -f a.yaml",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(self.decision(command, env=self.ENV)[0], "ask")
+
+    def test_production_name_wins_over_dev_pattern(self):
+        env = dict(self.ENV, DEVOPS_KIT_BLOCK_PROD=None)
+        self.assertEqual(self.decision("kubectl --context dev --kubeconfig k/kubeconfig.hetzner-live delete pod x", env=env)[0], "deny")
+
+    def test_forbidden_commands_stay_denied(self):
+        self.assertEqual(self.decision("kubectl --context kind-dev delete ns app", env=self.ENV)[0], "deny")
+
+    def test_off_by_default_and_bad_regex(self):
+        self.assertEqual(self.decision("kubectl --context kind-dev delete pod x")[0], "ask")
+        self.assertEqual(self.decision("kubectl --context kind-dev delete pod x", env={"DEVOPS_KIT_DEV_PATTERN": "("})[0], "ask")
+
+
+class Heredocs(HookTestCase):
+    def test_data_heredoc_body_is_not_read_as_commands(self):
+        doc = "cat > notes.md <<'EOF'\nkubectl --context x delete ns shop\nterraform destroy\nEOF\ngit status"
+        self.assertEqual(self.decision(doc), (None, None))
+        doc = "python3 - <<EOF\nprint('kubectl delete pod web')\nEOF"
+        self.assertEqual(self.decision(doc), (None, None))
+
+    def test_backslash_delimiter_is_a_quoted_delimiter(self):
+        doc = "cat > f.sh <<\\EOF\nkubectl --context x delete ns shop\nEOF"
+        self.assertEqual(self.decision(doc), (None, None))
+
+    def test_yaml_heredoc_to_kubectl_still_asks_for_the_apply(self):
+        decision, reason = self.decision("kubectl apply -f - <<EOF\napiVersion: v1\nkind: ConfigMap\nEOF")
+        self.assertEqual(decision, "ask")
+        self.assertIn("kubectl apply", reason)
+
+    def test_heredoc_fed_to_a_shell_is_checked(self):
+        self.assertEqual(self.decision("bash <<'EOF'\nkubectl --context x delete ns shop\nEOF")[0], "deny")
+        self.assertEqual(self.decision("sh <<-EOF\n\tkubectl delete pod web\n\tEOF")[0], "ask")
+
+    def test_unquoted_body_with_substitution_is_checked(self):
+        self.assertEqual(self.decision("cat <<EOF\n$(x)\nkubectl delete pod web\nEOF")[0], "ask")
+
+    def test_commands_after_the_heredoc_are_checked(self):
+        self.assertEqual(self.decision("cat > a.txt <<'EOF'\nhello\nEOF\nkubectl delete pod web")[0], "ask")
+
+    def test_body_is_checked_when_it_may_run(self):
+        """Found in review: these hid a forbidden command. Only cat/tee/kubectl apply -f - bodies are skipped."""
+        delete = "kubectl --context x delete ns shop"
+        for command in (
+            f"echo '<<EOF'\n{delete}",                      # << inside quotes is not a heredoc
+            f"cat <<EOF-1\nhello\nEOF-1\n{delete}",          # delimiter is the whole word
+            f"cat <<'E'OF\nhello\nEOF\n{delete}",            # quotes removed: delimiter EOF
+            f"cat <<EOF | bash\n{delete}\nEOF",              # piped to a shell
+            f"source /dev/stdin <<EOF\n{delete}\nEOF",
+            f"ssh jump <<EOF\n{delete}\nEOF",
+            f"kubectl exec -i p -- sh <<EOF\n{delete}\nEOF",
+            f"cat > a.txt <<'EOF'\nno end line\n{delete}",   # no end line: keep everything
+            f"kubectl get pods <<<a\n{delete}",              # here-string, not a heredoc
+            f"kubectl get pods # <<EOF\n{delete}",           # in a comment
+            # second review round
+            f"cat<<EOF|bash\n{delete}\nEOF",                 # no spaces around the pipe
+            f"cat <<EOF \\\n| bash\n{delete}\nEOF",           # line goes on below
+            f"cat <<EOF > >(bash)\n{delete}\nEOF",           # process substitution
+            f"tee >(sh) <<EOF\n{delete}\nEOF",
+            f'cat "a\\" <<EOF"\n{delete}\nEOF',              # << inside double quotes with \"
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(self.decision(command)[0], "deny")
+
+
+class DevPatternIsStrict(HookTestCase):
+    """Found in review: the "allow" covers the whole Bash command, so it must be one plain call."""
+    ENV = {"DEVOPS_KIT_DEV_PATTERN": r"^(kind-|dev-)"}
+
+    def test_no_allow_for_anything_but_one_plain_call(self):
+        for command in (
+            "kubectl --context kind-a delete pod x & rm -rf ~/work",
+            "kubectl --context kind-a delete pod x # <<EOF\nrm -rf ~/work",
+            "kubectl --context kind-a apply -f - > ~/.bashrc",
+            "kubectl --context kind-a --cluster prod-aks --user prod-admin delete deploy api",
+            "kubectl --context kind-a --server https://10.0.0.1 delete deploy api",
+            "kubectl --context kind-a --token abc delete deploy api",
+            "helm --kube-context kind-a --kube-apiserver https://10.0.0.1 upgrade web ./chart",
+            "git push origin dev-x:main",
+            "ansible-playbook -i dev-inv site.yml",
+            "az --subscription dev-sub group delete -n rg",
+            "make deploy e=dev-a",
+            "kubectl --context kind-a exec pod -- rm -rf /data",
+            "kubectl --context kind-a debug node/x -it --image=busybox",
+            "helm --kube-context kind-a upgrade x ./chart --post-renderer ./run.sh",
+            "helm --kube-context kind-a upgrade x oci://registry.example/chart",
+        ):
+            with self.subTest(command=command):
+                self.assertNotEqual(self.decision(command, env=self.ENV)[0], "allow")
+
+    def test_no_allow_when_any_word_looks_like_production(self):
+        env = dict(self.ENV, TF_WORKSPACE="dev-a")
+        self.assertNotEqual(self.decision("terraform apply -var-file=prod.tfvars", env=env)[0], "allow")
+        self.assertNotEqual(self.decision("terraform apply -auto-approve tfplan", env=env)[0], "allow")
+        self.assertEqual(self.decision("terraform apply tfplan", env=env)[0], "allow")
 
 
 if __name__ == "__main__":

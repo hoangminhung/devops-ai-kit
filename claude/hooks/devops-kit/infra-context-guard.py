@@ -13,17 +13,20 @@ slips past `Bash(kubectl delete ns *)`; the hook parses the flags and catches
 it in any order.
 
 Design rules:
-  * Never loosens anything. The hook only returns "ask" or "deny" ("deny" for
-    the forbidden commands above, and for production targets when
-    DEVOPS_KIT_BLOCK_PROD=1). Permission deny/ask rules in settings.json still
-    apply regardless.
+  * Does not loosen anything by default. The hook returns "ask" or "deny"
+    ("deny" for the forbidden commands above, and for production targets
+    unless DEVOPS_KIT_BLOCK_PROD=0). The only "allow" is opt-in: a single
+    simple command on a target that matches DEVOPS_KIT_DEV_PATTERN. Permission
+    deny rules in settings.json still apply regardless.
   * Fails open: on any internal error it prints nothing and exits 0, so the
     normal permission flow decides.
   * Fast: no network calls, only local config lookups with short timeouts.
 
 Environment knobs:
   DEVOPS_KIT_PROD_PATTERN  regex matched against target names (case-insensitive)
-  DEVOPS_KIT_BLOCK_PROD=1  deny (instead of ask) mutations on production targets
+  DEVOPS_KIT_BLOCK_PROD=0  ask (instead of deny) for mutations on production targets
+  DEVOPS_KIT_DEV_PATTERN   regex for dev/sandbox targets: a single mutating command
+                           there runs without a confirm dialog (off when unset)
   DEVOPS_KIT_GUARD_OFF=1   disable the hook entirely
 """
 
@@ -34,6 +37,7 @@ import re
 import shlex
 import subprocess
 import sys
+from urllib.parse import unquote, urlsplit
 
 PROD_RE = re.compile(
     os.environ.get(
@@ -42,11 +46,15 @@ PROD_RE = re.compile(
     ),
     re.IGNORECASE,
 )
-BLOCK_PROD = os.environ.get("DEVOPS_KIT_BLOCK_PROD") == "1"
+BLOCK_PROD = os.environ.get("DEVOPS_KIT_BLOCK_PROD", "1") != "0"
+DEV_PATTERN = os.environ.get("DEVOPS_KIT_DEV_PATTERN", "")
 
 SEGMENT_SPLIT = re.compile(r"&&|\|\||;|\||\n")
+HEREDOC = re.compile(r"<<(-?)\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2")
 ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 WRAPPERS = {"sudo", "time", "nice", "nohup", "command", "builtin", "exec", "&"}
+# Shell keywords that can start a segment: `for …; do kubectl …; done`, `if …; then …; fi`, `{ …; }`, `( … )`, `! …`
+SHELL_KEYWORDS = {"do", "then", "else", "elif", "while", "until", "!", "{", "(", "}", ")"}
 SHELL_TOOLS = {"Bash", "PowerShell"}
 SHELLS = {"bash", "sh", "zsh", "dash"}
 
@@ -128,6 +136,11 @@ KUBECTL_FORBIDDEN_DELETE = {
 SECRET_RESOURCES = {"secret", "secrets"}
 SECRET_SAFE_OUTPUT = {"name", "wide"}  # these show no values
 HELM_REMOVE = {"uninstall", "delete", "del", "un"}
+# /api/v1/[watch/][namespaces/<ns>/]secrets[/<name>] (kubectl proxy + curl)
+SECRETS_API = re.compile(r"/api/v1/(watch/)?(namespaces/[^/]+/)?secrets(/|$)")
+KUBECTL_SHORT_VALUE = set("nolLfkcsv")  # short flags that take a value (pflag: -Aoyaml = -A -o yaml)
+KUBECTL_UNKNOWN_OBJECTS = {"-f", "--filename", "-k", "--kustomize"}  # objects named in files: may be Secrets
+HELM_GET_SECRET = {"values", "manifest", "all"}  # release values and rendered Secrets
 
 
 class Blocked(Exception):
@@ -154,15 +167,18 @@ def tokenize(segment):
 
 
 def peel(tokens):
-    """Strip leading env assignments and wrapper commands.
+    """Strip leading env assignments, wrapper commands and shell keywords.
 
     Returns (tokens, env_overrides).
     """
+    tokens = [t for t in (tok.lstrip("(").rstrip(")") if tok not in ("(", ")") else tok for tok in tokens) if t]
     env = {}
     i = 0
     while i < len(tokens):
         tok = tokens[i]
-        if ENV_ASSIGN.match(tok):
+        if tok in SHELL_KEYWORDS:
+            i += 1
+        elif ENV_ASSIGN.match(tok):
             key, _, val = tok.partition("=")
             env[key] = val
             i += 1
@@ -314,6 +330,90 @@ def output_values(args):
     return values
 
 
+def expand_short_flags(args):
+    """`-Ao yaml` → `-A -o yaml`, `-Aojson` → `-A -o json`, `-v=9` → `-v 9` (pflag rules)."""
+    out = []
+    for tok in args:
+        if not tok.startswith("-") or tok.startswith("--") or len(tok) <= 2:
+            out.append(tok)
+            continue
+        rest = tok[1:]
+        for j, char in enumerate(rest):
+            out.append("-" + char)
+            if char in KUBECTL_SHORT_VALUE:
+                value = rest[j + 1:].lstrip("=")
+                if value:
+                    out.append(value)
+                break
+    return out
+
+
+def url_path(text):
+    """Decoded path of a URL or API path, without query and fragment (`%73ecrets` → `secrets`)."""
+    try:
+        path = urlsplit(text).path if "://" in text else text.split("?")[0].split("#")[0]
+    except ValueError:
+        path = text
+    return unquote(unquote(path)).lower()
+
+
+def verbosity(flags):
+    try:
+        return int(flag(flags, "-v", "--v") or 0)
+    except ValueError:
+        return 0
+
+
+def kubectl_get_parts(args):
+    """(positionals, flags) of a kubectl command, parsed like pflag; words after `--` are positionals too."""
+    args = expand_short_flags(args)
+    head, tail = (args[:args.index("--")], args[args.index("--") + 1:]) if "--" in args else (args, [])
+    pos, flags = parse_args(head, KUBECTL_VALUE_FLAGS | {"--sort-by", "--label-columns", "--chunk-size", "--template", "--raw"})
+    return pos + tail, flags, head
+
+
+def kubectl_secret_read(base, args):
+    """Why this kubectl/oc command can print secret values, or None."""
+    pos, flags, head = kubectl_get_parts(args)
+    if base == "oc" and pos[:1] == ["extract"]:
+        return "oc extract (writes or prints secret values)"
+    if pos[:1] == ["view-secret"]:
+        return f"{base} view-secret (plugin that prints secret values)"
+    if pos[:2] == ["apply", "view-last-applied"] and any(resource_types(p) & SECRET_RESOURCES for p in pos[2:]):
+        return f"{base} apply view-last-applied on a Secret (prints its values)"
+    if pos[:1] != ["get"]:
+        return None
+    raw = flag(flags, "--raw")
+    if raw is not None:
+        if "secrets" in url_path(raw).split("/"):
+            return f"{base} get --raw on the secrets API (prints secret values)"
+        return None
+    shows_values = (any(v.lower() not in SECRET_SAFE_OUTPUT for v in output_values(head))
+                    or "--template" in flags or verbosity(flags) >= 6)
+    if not shows_values:
+        return None
+    if any(resource_types(p) & SECRET_RESOURCES for p in pos[1:]):
+        return (f"{base} get Secrets with an output or log level that prints values "
+                "(use `kubectl describe secret <name>`, or secret_fingerprint.py to compare)")
+    return None
+
+
+def kubectl_unknown_objects(base, args):
+    """`kubectl get -f x.yaml -o yaml`: the files may name Secrets, so ask (not deny)."""
+    pos, flags, head = kubectl_get_parts(args)
+    if pos[:1] != ["get"]:
+        return None
+    from_files = any(f in flags for f in KUBECTL_UNKNOWN_OBJECTS)
+    expanded = any(ch in p for p in pos[1:] for ch in "${`*?[")
+    if not (from_files or expanded):
+        return None
+    if any(v.lower() not in SECRET_SAFE_OUTPUT for v in output_values(head)) or "--template" in flags or verbosity(flags) >= 6:
+        where = "objects from -f / -k" if from_files else "a resource set by the shell ($VAR, {a,b}, glob)"
+        return (f"{base} get {where} with an output that prints values: if it is a Secret, this shows its values",
+                [], False)
+    return None
+
+
 def subsequence(pos, words):
     n = len(words)
     return any(pos[i:i + n] == words for i in range(len(pos) - n + 1))
@@ -322,18 +422,21 @@ def subsequence(pos, words):
 def forbidden(base, args):
     """Why this command is always denied, or None."""
     if base in ("kubectl", "oc"):
-        pos, _ = parse_args(args, KUBECTL_VALUE_FLAGS)
+        pos, _ = parse_args(expand_short_flags(args), KUBECTL_VALUE_FLAGS)
         if len(pos) >= 2 and pos[0] == "delete" and resource_types(pos[1]) & KUBECTL_FORBIDDEN_DELETE:
             return f"{base} delete {pos[1]} (namespace / PV / PVC / CRD deletes are never run by the AI)"
-        if len(pos) >= 2 and pos[0] == "get" and resource_types(pos[1]) & SECRET_RESOURCES:
-            shows_values = any(v.lower() not in SECRET_SAFE_OUTPUT for v in output_values(args))
-            if shows_values or any(a.startswith("--template") for a in args):
-                return (f"{base} get {pos[1]} with an output format that prints secret values "
-                        "(use `kubectl describe secret <name>` to see key names only)")
+        return kubectl_secret_read(base, args)
+    elif base in ("curl", "wget", "http", "https"):
+        if any(SECRETS_API.search(url_path(a)) for a in args if not a.startswith("-")):
+            return f"{base} on the Kubernetes secrets API (prints secret values)"
     elif base == "helm":
-        pos, _ = parse_args(args, HELM_VALUE_FLAGS)
+        pos, flags = parse_args(args, HELM_VALUE_FLAGS)
         if pos and pos[0] in HELM_REMOVE:
             return f"helm {pos[0]} {pos[1] if len(pos) > 1 else ''}".rstrip()
+        if pos[:1] == ["get"] and len(pos) > 1 and pos[1] in HELM_GET_SECRET:
+            return f"helm get {pos[1]} (release values and rendered Secrets can hold passwords)"
+        if pos[:1] == ["status"] and any(v.lower() in ("json", "yaml") for v in output_values(args)):
+            return "helm status -o json/yaml (prints the release config)"
     elif base in ("terraform", "tofu"):
         pos = [t for t in args if not t.startswith("-")]
         if pos and (pos[0] == "destroy" or (pos[0] == "apply" and "-destroy" in args)):
@@ -586,7 +689,7 @@ def analyse_segment(segment, cwd, depth=0, exported=None):
         raise Blocked(reason)
 
     if base in ("kubectl", "oc"):
-        hit = detect_kubectl(base, args, env, cwd)
+        hit = detect_kubectl(base, args, env, cwd) or kubectl_unknown_objects(base, args)
     elif base == "helm":
         hit = detect_helm(args, env, cwd)
     elif base in ("terraform", "tofu"):
@@ -614,6 +717,123 @@ def analyse_segment(segment, cwd, depth=0, exported=None):
     return [hit] if hit else []
 
 
+def heredoc_start(line):
+    """(position, delimiter, quoted, strip_tabs) of a `<<` heredoc on this line, or None.
+
+    Only one plain heredoc is accepted: `<<` outside quotes and comments, not `<<<`,
+    delimiter word with its quotes removed (`'E'OF` is EOF). Anything unusual → None,
+    so the lines below are checked as commands (fail closed).
+    """
+    quote, i, found = None, 0, []
+    while i < len(line):
+        ch = line[i]
+        if quote:
+            if ch == quote:
+                quote = None
+            elif ch == "\\" and quote == '"':
+                i += 1  # \" inside double quotes does not close them
+        elif ch in "'\"":
+            quote = ch
+        elif ch == "\\":
+            i += 1
+        elif ch == "#" and (i == 0 or line[i - 1].isspace()):
+            break
+        elif line.startswith("<<", i):
+            if line.startswith("<<<", i) or (i and line[i - 1] == "<"):
+                return None
+            found.append(i)
+            i += 1
+        i += 1
+    if len(found) != 1 or line.rstrip().endswith("\\"):
+        return None  # several heredocs, or the line goes on below (`<<EOF \` + `| bash`)
+    pos = found[0]
+    rest = line[pos + 2:]
+    strip_tabs = rest.startswith("-")
+    word = re.match(r"\s*(\S+)", rest[1:] if strip_tabs else rest)
+    if not word:
+        return None
+    raw = word.group(1)
+    # Anything that could pass the body to code: pipes, chains, background, (process) substitution.
+    if re.search(r"[;|&()`$]", line[:pos] + line[pos:]):
+        return None
+    delim = re.sub(r"['\"\\]", "", raw)
+    if not delim or re.search(r"[<>]", delim):
+        return None
+    return pos, delim, raw != delim, strip_tabs
+
+
+def data_feeder(text):
+    """True when the command before `<<` only stores or applies data: cat/tee to a file, kubectl apply -f -."""
+    segments = SEGMENT_SPLIT.split(text)
+    if len(segments) != 1:
+        return False
+    try:
+        tokens, _ = peel(shlex.split(segments[0], posix=True))
+    except ValueError:
+        return False  # unbalanced quotes: do not guess
+    if not tokens:
+        return False
+    base = re.split(r"[\\/]", tokens[0])[-1]
+    if base in ("cat", "tee"):
+        return True
+    if base in ("kubectl", "oc"):
+        pos, _ = parse_args(tokens[1:], KUBECTL_VALUE_FLAGS - {"-f", "--filename"})
+        return bool(pos) and pos[0] in ("apply", "create", "replace", "diff") and "-" in tokens
+    return False
+
+
+def strip_heredocs(command):
+    """Drop heredoc bodies that are only data (`cat > f.md <<'EOF'`, `kubectl apply -f - <<EOF`).
+
+    Without this, every line of a file written with a heredoc is read as a command,
+    which gives false asks and denies. Bodies are kept (and checked) in every other
+    case: fed to anything else (bash, ssh, kubectl exec, source …), a pipe or a chain
+    after the heredoc, `$(`/backticks in an unquoted body, no exact end line.
+    """
+    lines, out, i = command.split("\n"), [], 0
+    while i < len(lines):
+        line = lines[i]
+        out.append(line)
+        i += 1
+        start = heredoc_start(line)
+        if not start:
+            continue
+        pos, delim, quoted, strip_tabs = start
+        end = next((j for j in range(i, len(lines))
+                    if (lines[j].lstrip("\t") if strip_tabs else lines[j]) == delim), None)
+        if end is None:
+            continue  # no end line: keep everything
+        body = lines[i:end]
+        runs_code = not quoted and any("$(" in b or "`" in b for b in body)
+        if data_feeder(line[:pos]) and not runs_code:
+            out.append(lines[end])
+            i = end + 1
+    return "\n".join(out)
+
+
+# Characters that make a command more than one plain call: chains, background, pipes,
+# redirection, substitution, comments, variables. Any of them → no "allow".
+NOT_SIMPLE = re.compile(r"[\n;&|<>`$#(){}]")
+RUNS_CODE = {"exec", "attach", "debug", "cp", "port-forward", "proxy", "run", "--post-renderer"}
+# Flags that send a command somewhere else than its named context.
+REDIRECT_FLAGS = ("--server", "-s", "--cluster", "--user", "--token", "--as", "--as-group",
+                  "--kube-apiserver", "--kube-token", "--kube-as-user", "--kube-as-group")
+
+
+def single_simple_command(command):
+    """True for one plain kubectl / helm / terraform / tofu call with no shell features."""
+    if NOT_SIMPLE.search(command):
+        return False
+    tokens, env = peel(tokenize(command))
+    if not tokens or re.split(r"[\\/]", tokens[0])[-1] not in ("kubectl", "helm", "terraform", "tofu"):
+        return False
+    if any(t in RUNS_CODE for t in tokens):
+        return False  # kubectl exec / debug … or helm --post-renderer run any code
+    if any(re.match(r"(oci|https?)://", t) for t in tokens):
+        return False  # a chart from the network
+    return not any(t.split("=", 1)[0] in REDIRECT_FLAGS or t.startswith("-auto-approve") for t in tokens)
+
+
 def analyse_command(command, cwd, depth=0):
     hits, exported = [], {}
     for segment in SEGMENT_SPLIT.split(command):
@@ -636,6 +856,8 @@ def main():
         # PowerShell escapes with backtick, not backslash: keep Windows paths intact for shlex.
         command = command.replace("\\", "/")
     cwd = payload.get("cwd") or os.getcwd()
+    original = command
+    command = strip_heredocs(command)
     try:
         hits = analyse_command(command, cwd)
     except Blocked as exc:
@@ -661,13 +883,34 @@ def main():
     if BLOCK_PROD and prod_targets:
         decision = "deny"
         reason = (
-            "devops-ai-kit: mutating command against a production target is blocked in this "
-            "session (DEVOPS_KIT_BLOCK_PROD=1): " + " | ".join(prod_targets) +
+            "devops-ai-kit: mutating command against a production target is blocked "
+            "(the default; DEVOPS_KIT_BLOCK_PROD=0 turns it off): " + " | ".join(prod_targets) +
             ". Prepare the change as a GitOps PR or give the exact command to the user to run."
         )
+    elif dev_only(hits, original):
+        decision = "allow"
+        reason += " (dev target matches DEVOPS_KIT_DEV_PATTERN: no confirmation)"
     else:
         decision = "ask"
     respond(decision, reason)
+
+
+def dev_only(hits, command):
+    """Opt-in: one plain kubectl/helm/terraform call whose context or workspace is a dev target.
+
+    `command` is the original text (before heredoc bodies were dropped). No word of
+    it may look like production, and it must not point to another server or user.
+    """
+    if not DEV_PATTERN or len(hits) != 1 or not single_simple_command(command):
+        return False
+    _, names, readonly = hits[0]
+    tokens, env = peel(tokenize(command))
+    words = [part for word in tokens + list(env.values()) for part in word.split("=")]  # -var-file=prod.tfvars
+    try:
+        return (not readonly and not is_prod(*names) and not is_prod(*words) and bool(names) and bool(names[0])
+                and re.search(DEV_PATTERN, names[0], re.IGNORECASE) is not None)
+    except re.error:
+        return False
 
 
 def respond(decision, reason):
