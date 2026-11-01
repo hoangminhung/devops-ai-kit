@@ -227,7 +227,7 @@ def release_warnings(kit_dir):
         return ["WARNING: cannot read the git checkout (git missing, or `safe.directory`), so the release tag "
                 "was not checked."]
     warnings = []
-    dirty = git("status", "--porcelain", "--untracked-files=no")
+    dirty = git("status", "--porcelain")  # untracked files count: an extra skill would be installed too
     if dirty is not None and dirty.stdout.strip():
         warnings.append("WARNING: the checkout has local changes; they will be installed too.")
     tag = git("describe", "--tags", "--exact-match", "HEAD")
