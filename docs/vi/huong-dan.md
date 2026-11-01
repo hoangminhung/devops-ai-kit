@@ -272,6 +272,8 @@ Xem [cloud-readonly.md](cloud-readonly.md). Tóm tắt:
 
 **Dev và sandbox (tùy chọn).** Hỏi quá nhiều khiến người dùng quen tay bấm "Yes" mà không đọc, và rồi bỏ lỡ cả dòng production. Nếu bạn tin một nhóm đích dev, thêm ví dụ `--env DEVOPS_KIT_DEV_PATTERN='^(kind-|minikube|dev-)'`. Khi đó **một lệnh đơn thuần** `kubectl`, `helm`, `terraform` hoặc `tofu` có context hoặc workspace khớp mẫu sẽ chạy mà không hỏi. Lệnh đó cũng bỏ qua các rule "ask" trong settings, nên hook xét rất chặt. Mọi trường hợp khác vẫn hỏi: công cụ khác (git, ansible, CLI cloud, make), bất kỳ tính năng shell nào (`&&`, `&`, `;`, `|`, `>`, `<`, `$`, `#`, dòng thứ hai), `--server`, `--cluster`, `--user`, `--token`, `--as`, `-auto-approve`, bất kỳ từ nào trông giống production (ví dụ `-var-file=prod.tfvars`), context `-ro`. Các lệnh bị cấm vẫn bị chặn. Chỉ khớp những tên không bao giờ là môi trường dùng chung.
 
+Giới hạn đã biết: hook chỉ xét **tên**, không xét tên đó trỏ tới đâu. Một context tên `kind-a` nằm trong kubeconfig trỏ tới cluster dùng chung vẫn bị coi là "dev". `terraform apply` trên workspace dev vẫn có thể chạy code local (`local-exec`, data source `external`) ở bất kỳ thư mục nào được chỉ tới.
+
 `./check.sh` hiện cả hai thiết lập.
 
 ### 3.4. Đối chiếu giá trị secret mà không hiện giá trị
