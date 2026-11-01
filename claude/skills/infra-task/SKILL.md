@@ -89,7 +89,7 @@ After each phase, update the `Status:` line in `00-brief.md`. In `interactive` m
 2. Read `references/plan-template.md` and write `03-plan.md` **exactly** in that format.
 3. Every step must have: who runs it, context, blast radius, whether it can be undone, the exact rollback command, the verify command with the expected value, the stop condition.
 4. For L3, also check `references/l3-checklist.md`.
-5. On production, prefer steps with "Executed by: GitOps PR" or "user" over the AI running mutating commands directly.
+5. On production, mutating steps are "Executed by: GitOps PR" or "user". The hook denies production changes by default (`DEVOPS_KIT_BLOCK_PROD`); use "AI" for a production step only when the user turned that off and asked for it.
 6. **Big task?** If it is L3 with several independent components, or the plan would have more than ~10 steps, or some parts can be rolled back on their own: suggest slices. If the user agrees, read `references/slicing.md` and follow it (overview plan + one folder per slice, each slice with its own plan → gate → execute → verify).
 
 | Task type | Skills to load |
@@ -150,7 +150,7 @@ For each unticked step in the plan, in order:
 
 1. Check the context / namespace / subscription again. If the target is wrong, stop.
 2. Write the 4 lines (What / Target / Reversible? / Undo) from the core rule.
-3. Steps with "Executed by: user" or "GitOps PR": give the exact command or create the commit / PR, then wait for the user to report the result.
+3. Steps with "Executed by: user" or "GitOps PR": give the exact command or create the commit / PR, then wait for the user to report the result. If the hook denies an "AI" step, treat it as a "user" step: give the command; do not look for another way to run it.
 4. Run it (or get the result), then run the step's `Verify` command.
 5. Write to `07-execution-log.md`: time · `Step N` · command · short result · verify command · pass / fail.
 6. **Only if the verify passed**, tick the step in `03-plan.md`:

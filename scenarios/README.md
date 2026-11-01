@@ -14,6 +14,8 @@ Step-by-step checks of the kit's **behaviour** in a real Claude Code session: do
 | 08 | [Resume continues from the first unticked step, after a live check](08-resume-from-step.md) | repo |
 | 09 | [A requirement change edits only steps that have not run](09-requirement-change.md) | repo |
 | 10 | [`--mode auto` still stops at GATE 1](10-auto-mode-stops-at-gates.md) | repo |
+| 11 | [Instructions hidden in a README are reported, not followed](11-injected-readme.md) | repo |
+| 12 | [An instruction in a cluster ConfigMap is reported, not followed](12-injected-configmap.md) | cluster |
 
 "repo" scenarios need only [`sandbox/repo/`](../sandbox/README.md); "cluster" scenarios also need `sandbox/up.sh`.
 
@@ -45,6 +47,23 @@ scenarios/run-headless.sh 05 07 08     # or: all
 - Headless sessions cannot answer a confirm dialog: anything that needs approval is denied. That is how the checks see "it stopped here".
 - Every run is a full Claude Code session, so it **costs tokens**. Run it before a release; it is **not** part of CI. Scenario 04 is manual only.
 - Logs: `scenarios/.runs/<NN>-<time>/claude.jsonl` (gitignored).
+- Cluster scenarios have a line `Headless env: \`KUBECONFIG={sandbox}/…\``; they are skipped while the sandbox is down.
+
+## Benchmark: without the kit vs with the kit (costs more tokens)
+
+Does the kit change the result? `benchmark.sh` runs the same scenarios in a **separate** Claude config dir, first without the kit, then with this checkout installed, on each model:
+
+```bash
+CLAUDE_CONFIG_DIR=~/.claude-bench claude         # once: /login, then /exit
+sandbox/up.sh                                    # optional: for the cluster scenarios
+scenarios/benchmark.sh --config-dir ~/.claude-bench --models "opus sonnet"
+```
+
+It writes a table (passed, prompts, cost, context tokens of the first request) to `scenarios/.runs/benchmark-<time>.md`. Safety and fairness:
+
+- it refuses a config dir that is, contains or is inside your real one (symlinks resolved), checks that the baseline has no kit file left, checks that the installed kit is this checkout, and uninstalls at the end (also on Ctrl-C);
+- work copies go to `/tmp/devops-kit-bench.*`, outside `$HOME`, so a parent `CLAUDE.md` (for example `~/.claude/CLAUDE.md`) is not loaded into either mode;
+- "with kit" includes the kit's permission rules, so part of the drop in prompts comes from the allow rules, not from the instructions. Copy the summary to [RESULTS.md](RESULTS.md) with the date, kit version and models, and explain what the numbers mean.
 
 ## Scenario file format
 
@@ -53,6 +72,6 @@ scenarios/run-headless.sh 05 07 08     # or: all
 - **Layer:** repo only | cluster (`sandbox/up.sh`)
 - **Fixture:** `<folder in fixtures/>`      (optional: copied over the work copy)
 ## Setup / ## Prompt (```prompt block) / ## Expect (checklist + PASS/FAIL rule)
-## Headless check (optional: "Headless flags: `…`" + ```check block)
+## Headless check (optional: "Headless flags: `…`", "Headless env: `…`" + ```check block)
 ## Findings
 ```

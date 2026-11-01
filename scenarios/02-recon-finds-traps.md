@@ -22,6 +22,8 @@ Use the infra-recon agent on context sandbox-prod-ro (namespaces shop, monitorin
 
 ## Headless check
 
+Headless env: `KUBECONFIG={sandbox}/.kubeconfig:{sandbox}/.ai-kubeconfig`
+
 ```check
 agents_used | grep -q infra-recon || fail "infra-recon not used"
 final_text | grep -qi 'ingress-nginx' || fail "ingress-nginx not reported"

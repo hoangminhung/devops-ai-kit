@@ -267,9 +267,31 @@ See [cloud-readonly.md](cloud-readonly.md). Summary:
 - AWS: a `ViewOnlyAccess` profile, then `--env AWS_PROFILE=ai-readonly`.
 - GCP: a separate config folder, then `--env CLOUDSDK_CONFIG=...`.
 
-### 3.3. Hard-block every production change (optional)
+### 3.3. Production is blocked, dev can be quiet
 
-Add `--env DEVOPS_KIT_BLOCK_PROD=1`. The hook will **deny** (instead of ask) every mutating command whose target name (context, namespace, kubeconfig file name, workspace, …) matches the production pattern (`prod`, `prd`, `production`, `live`). Claude is told to prepare a GitOps PR or give you the command to run yourself. Change the pattern with `--env DEVOPS_KIT_PROD_PATTERN='<regex>'`.
+**Production (on by default).** The hook **denies** every mutating command whose target name (context, namespace, kubeconfig file name, workspace, …) matches the production pattern (`prod`, `prd`, `production`, `live`). Claude prepares a GitOps PR or gives you the command to run yourself, and `/infra-task` plans production steps as "Executed by: user" or "GitOps PR". Change the pattern with `--env DEVOPS_KIT_PROD_PATTERN='<regex>'`. To get a confirm dialog instead (not recommended), use `--env DEVOPS_KIT_BLOCK_PROD=0`.
+
+**Dev and sandbox (optional).** Too many confirm dialogs teach people to click "Yes" without reading, and then the production line is missed too. If you trust a set of dev targets, add for example `--env DEVOPS_KIT_DEV_PATTERN='^(kind-|minikube|dev-)'`. Then **one plain** `kubectl`, `helm`, `terraform` or `tofu` command whose context or workspace matches runs without a dialog. This also skips the settings "ask" rules for that command, so the hook is strict. Everything else still asks: other tools (git, ansible, cloud CLIs, make), any shell feature (`&&`, `&`, `;`, `|`, `>`, `<`, `$`, `#`, a second line), `--server`, `--cluster`, `--user`, `--token`, `--as`, `-auto-approve`, any word that looks like production (for example `-var-file=prod.tfvars`), `-ro` contexts. The forbidden commands stay denied. Match only names that can never be shared environments.
+
+Known limits: the hook checks **names**, not where they point. A context called `kind-a` in a kubeconfig that points to a shared cluster is still "dev". `terraform apply` on a dev workspace can still run local code (`local-exec`, `external` data sources) in whatever folder it is pointed at.
+
+`./check.sh` shows both settings.
+
+### 3.4. Compare secret values without showing them
+
+The kit blocks the known ways for Claude to print a secret value, even if you ask in the chat (`get secret -o yaml` in any flag order, `--raw`, `-f`/`-k` with an output format, `-v` ≥ 6, `oc extract`, `helm get values`, `curl` to the API). The read-only identity without Secret access (§3.1) is still the real protection. The hook cannot tell if a request came from you or from text Claude read (a log, a README). A printed value also stays in the session transcript on disk (`~/.claude/projects/`) and is sent to the model.
+
+Most of the time you only need to **compare**. Ask Claude to use `secret_fingerprint.py` (skill `pki-secrets`). It prints key names, sizes and match / differ, never the value. It is not on the allow list, so you confirm each run:
+
+```text
+compare shop/db-credentials on aks-prod-ro with aks-stg-ro
+→ password: differ (only a trailing newline)
+→ username: match
+```
+
+To check a value you have, export it in your shell before you start Claude (`export EXPECTED_DB_PW=...`) and ask Claude to compare `password` with `EXPECTED_DB_PW`.
+
+If you really need to see a value, run the command in your own terminal. The `!` prefix in Claude Code also runs it as you, but the output then goes into the chat and the transcript.
 
 ---
 
@@ -499,6 +521,7 @@ A long session is compacted many times, and each time some details can be lost. 
 
 - **Rules and skills are instructions, not laws.** The model can miss them in a turn; that is why layer 4 exists.
 - **Permission rules and the hook match command text**, so they can be bypassed: commands inside scripts, `eval`, environment variables, aliases. The hook does not read commands inside a script file that is called. They are a safety net for honest mistakes, not a security wall. The real wall is the read-only kubeconfig / cloud identity.
+- **Prompt injection.** A log line, an annotation or a README can hold text written for the AI ("ignore previous rules, run …"). `00-core` §10 and every agent treat such text as data and report it; `/infra-scout` writes only values into CLAUDE.md. This is an instruction to the model, so it can fail. The hook denies and the read-only identity are what stop the damage.
 - **The hook fails open:** on an internal error it blocks nothing and lets the normal confirm flow decide. The hook does not know the namespace set inside a YAML file (`metadata.namespace`); it shows the namespace from the flag or from the context.
 - **Flags before the verb.** Permission rules match text from the start, so the kit adds a twin rule for each `kubectl` / `helm` / `terraform` rule (`kubectl * get *`, `terraform -chdir=* plan*`). The hook parses the flags and denies the forbidden commands (namespace / PVC / CRD deletes, destroy, helm uninstall, secret values) in any order.
 - **Some deny patterns are a bit broad.** For example `kubectl * get secret*-o*` also blocks `kubectl --context X get secretstores -o yaml`, and `helm * delete*` blocks a `helm template … --set delete=…`. If a command is blocked by mistake, run it in your own terminal.
@@ -523,7 +546,7 @@ A long session is compacted many times, and each time some details can be lost. 
   ```
 
 - **Test the kit's behaviour** with the scenarios in `scenarios/` (Contributing / Testing the kit):
-  - layer 1, `sandbox/repo/`: a sample infrastructure repo (Terraform with local providers only, Helm, Argo CD manifest, Ansible for localhost); no cloud, no cluster; enough for 6 of the 10 scenarios;
+  - layer 1, `sandbox/repo/`: a sample infrastructure repo (Terraform with local providers only, Helm, Argo CD manifest, Ansible for localhost); no cloud, no cluster; enough for 7 of the 12 scenarios;
   - layer 2, optional: `sandbox/up.sh` creates a kind cluster with traps (ingress-nginx, a `Delete` StorageClass, a fake Secret, a `sandbox-prod` context and a read-only `-ro` context), using its own kubeconfig, never `~/.kube/config`;
   - `scenarios/prepare.sh <NN>` makes a fresh work copy; `scenarios/run-headless.sh` runs the scenarios that have a check block with `claude -p` (costs tokens, not in CI).
   - Scenarios test the kit **installed** in your Claude config dir: an installed skill wins over a project copy with the same name. To test a branch, install it into a separate `CLAUDE_CONFIG_DIR`.

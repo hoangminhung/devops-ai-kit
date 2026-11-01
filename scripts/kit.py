@@ -299,6 +299,9 @@ def install(args):
         ops.write_json(SETTINGS, settings)
         counts = {k: len(v) for k, v in added["permissions"].items()}
         print(f"settings: added permission rules {counts or '{}'}; hook added: {added['hook']}; env: {list(added['env']) or '[]'}")
+        if "DEVOPS_KIT_BLOCK_PROD" not in added["env"]:
+            print("note: production changes are denied by default since 1.3.0 "
+                  "(--env DEVOPS_KIT_BLOCK_PROD=0 to get a confirm dialog instead)")
     elif manifest.get("settings"):
         added = manifest["settings"]  # keep tracking what an earlier install added
 
@@ -378,6 +381,11 @@ def check(_args):
     hook_ok = any(HOOK_MARKER in h.get("command", "")
                   for e in settings.get("hooks", {}).get("PreToolUse", []) for h in e.get("hooks", []))
     print(f"Context-guard hook: {'registered' if hook_ok else 'NOT registered'}")
+    env = dict(os.environ, **settings.get("env", {}))  # settings env wins inside Claude sessions
+    block = env.get("DEVOPS_KIT_BLOCK_PROD", "1") != "0"
+    print(f"Production changes: {'blocked (default)' if block else 'ask (DEVOPS_KIT_BLOCK_PROD=0)'}")
+    dev = env.get("DEVOPS_KIT_DEV_PATTERN")
+    print(f"Dev targets       : {f'no confirm for {dev!r} (DEVOPS_KIT_DEV_PATTERN)' if dev else 'confirm every change (default)'}")
     kubeconfig = settings.get("env", {}).get("KUBECONFIG")
     if kubeconfig:
         exists = Path(kubeconfig).expanduser().exists()
