@@ -25,7 +25,7 @@ Headless flags: `--allowedTools "Bash(python3:*)" "Bash(grep:*)" "Bash(cat:*)" "
 
 ```check
 bash_commands | grep -q 'plan_status.py status' || fail "plan_status not used"
-bash_commands | grep -q 'grep replicas' || fail "Step 1 verify not re-run"
+bash_commands | grep -qE 'grep( -[a-zA-Z]+)* replicas' || fail "Step 1 verify not re-run"
 [[ ! -e out/prod.json ]] || fail "applied without approval"
 grep -q '^- \[x\] Step 1: Set replicas to 4 in the prod tfvars — ✅ 2026-11-01 09:15 UTC' docs/changes/2026-11-01-prod-replicas/03-plan.md || fail "ticked step changed"
 ```
