@@ -272,9 +272,9 @@ Add `--env DEVOPS_KIT_BLOCK_PROD=1`. The hook will **deny** (instead of ask) eve
 
 ### 3.4. Compare secret values without showing them
 
-The kit never lets Claude print a secret value, even if you ask in the chat. The hook cannot tell if a request came from you or from text Claude read (a log, a README). A printed value also stays in the session transcript on disk (`~/.claude/projects/`) and is sent to the model.
+The kit blocks the known ways for Claude to print a secret value, even if you ask in the chat (`get secret -o yaml` in any flag order, `--raw`, `-f`/`-k` with an output format, `-v` ≥ 6, `oc extract`, `helm get values`, `curl` to the API). The read-only identity without Secret access (§3.1) is still the real protection. The hook cannot tell if a request came from you or from text Claude read (a log, a README). A printed value also stays in the session transcript on disk (`~/.claude/projects/`) and is sent to the model.
 
-Most of the time you only need to **compare**. Ask Claude to use `secret_fingerprint.py` (skill `pki-secrets`). It prints key names, sizes and match / differ, never the value:
+Most of the time you only need to **compare**. Ask Claude to use `secret_fingerprint.py` (skill `pki-secrets`). It prints key names, sizes and match / differ, never the value. It is not on the allow list, so you confirm each run:
 
 ```text
 compare shop/db-credentials on aks-prod-ro with aks-stg-ro

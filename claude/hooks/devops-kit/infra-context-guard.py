@@ -34,6 +34,7 @@ import re
 import shlex
 import subprocess
 import sys
+from urllib.parse import unquote, urlsplit
 
 PROD_RE = re.compile(
     os.environ.get(
@@ -128,9 +129,11 @@ KUBECTL_FORBIDDEN_DELETE = {
 SECRET_RESOURCES = {"secret", "secrets"}
 SECRET_SAFE_OUTPUT = {"name", "wide"}  # these show no values
 HELM_REMOVE = {"uninstall", "delete", "del", "un"}
-# /api/v1/secrets, /api/v1/namespaces/<ns>/secrets[/<name>] (kubectl get --raw, kubectl proxy + curl)
-SECRETS_API = re.compile(r"/api/v1/(namespaces/[^/\s]+/)?secrets(/|\?|$)")
-SECRETS_PATH = re.compile(r"/secrets(/|\?|$)")  # any --raw path with a secrets segment
+# /api/v1/[watch/][namespaces/<ns>/]secrets[/<name>] (kubectl proxy + curl)
+SECRETS_API = re.compile(r"/api/v1/(watch/)?(namespaces/[^/]+/)?secrets(/|$)")
+KUBECTL_SHORT_VALUE = set("nolLfkcsv")  # short flags that take a value (pflag: -Aoyaml = -A -o yaml)
+KUBECTL_UNKNOWN_OBJECTS = {"-f", "--filename", "-k", "--kustomize"}  # objects named in files: may be Secrets
+HELM_GET_SECRET = {"values", "manifest", "all"}  # release values and rendered Secrets
 
 
 class Blocked(Exception):
@@ -317,6 +320,64 @@ def output_values(args):
     return values
 
 
+def expand_short_flags(args):
+    """`-Ao yaml` → `-A -o yaml`, `-Aojson` → `-A -o json`, `-v=9` → `-v 9` (pflag rules)."""
+    out = []
+    for tok in args:
+        if not tok.startswith("-") or tok.startswith("--") or len(tok) <= 2:
+            out.append(tok)
+            continue
+        rest = tok[1:]
+        for j, char in enumerate(rest):
+            out.append("-" + char)
+            if char in KUBECTL_SHORT_VALUE:
+                value = rest[j + 1:].lstrip("=")
+                if value:
+                    out.append(value)
+                break
+    return out
+
+
+def url_path(text):
+    """Decoded path of a URL or API path, without query and fragment (`%73ecrets` → `secrets`)."""
+    try:
+        path = urlsplit(text).path if "://" in text else text.split("?")[0].split("#")[0]
+    except ValueError:
+        path = text
+    return unquote(unquote(path)).lower()
+
+
+def verbosity(flags):
+    try:
+        return int(flag(flags, "-v", "--v") or 0)
+    except ValueError:
+        return 0
+
+
+def kubectl_secret_read(base, args):
+    """Why this kubectl/oc command can print secret values, or None."""
+    args = expand_short_flags(args)
+    pos, flags = parse_args(args, KUBECTL_VALUE_FLAGS | {"--sort-by", "--label-columns", "--chunk-size", "--template"})
+    if base == "oc" and pos[:1] == ["extract"]:
+        return "oc extract (writes or prints secret values)"
+    if pos[:1] != ["get"]:
+        return None
+    if any(a == "--raw" or a.startswith("--raw=") for a in args):
+        paths = [a.split("=", 1)[1] if a.startswith("--raw=") else a for a in args if a.startswith(("/", "--raw="))]
+        if any("secrets" in url_path(path).split("/") for path in paths):
+            return f"{base} get --raw on the secrets API (prints secret values)"
+        return None
+    names_secret = any(resource_types(p) & SECRET_RESOURCES for p in pos[1:])
+    unknown = any(f in flags for f in KUBECTL_UNKNOWN_OBJECTS)
+    shows_values = (any(v.lower() not in SECRET_SAFE_OUTPUT for v in output_values(args))
+                    or "--template" in flags)
+    if (names_secret or unknown) and (shows_values or verbosity(flags) >= 6):
+        what = "objects from -f / -k (they may be Secrets)" if unknown and not names_secret else "Secrets"
+        return (f"{base} get {what} with an output or log level that prints values "
+                "(use `kubectl describe secret <name>`, or secret_fingerprint.py to compare)")
+    return None
+
+
 def subsequence(pos, words):
     n = len(words)
     return any(pos[i:i + n] == words for i in range(len(pos) - n + 1))
@@ -325,23 +386,21 @@ def subsequence(pos, words):
 def forbidden(base, args):
     """Why this command is always denied, or None."""
     if base in ("kubectl", "oc"):
-        if any(a.startswith("--raw") for a in args) and any(SECRETS_PATH.search(a) for a in args):
-            return f"{base} --raw on the secrets API (prints secret values)"
-        pos, _ = parse_args(args, KUBECTL_VALUE_FLAGS)
+        pos, _ = parse_args(expand_short_flags(args), KUBECTL_VALUE_FLAGS)
         if len(pos) >= 2 and pos[0] == "delete" and resource_types(pos[1]) & KUBECTL_FORBIDDEN_DELETE:
             return f"{base} delete {pos[1]} (namespace / PV / PVC / CRD deletes are never run by the AI)"
-        if len(pos) >= 2 and pos[0] == "get" and resource_types(pos[1]) & SECRET_RESOURCES:
-            shows_values = any(v.lower() not in SECRET_SAFE_OUTPUT for v in output_values(args))
-            if shows_values or any(a.startswith("--template") for a in args):
-                return (f"{base} get {pos[1]} with an output format that prints secret values "
-                        "(use `kubectl describe secret <name>` to see key names only)")
+        return kubectl_secret_read(base, args)
     elif base in ("curl", "wget", "http", "https"):
-        if any(SECRETS_API.search(a) for a in args):
+        if any(SECRETS_API.search(url_path(a)) for a in args if not a.startswith("-")):
             return f"{base} on the Kubernetes secrets API (prints secret values)"
     elif base == "helm":
-        pos, _ = parse_args(args, HELM_VALUE_FLAGS)
+        pos, flags = parse_args(args, HELM_VALUE_FLAGS)
         if pos and pos[0] in HELM_REMOVE:
             return f"helm {pos[0]} {pos[1] if len(pos) > 1 else ''}".rstrip()
+        if pos[:1] == ["get"] and len(pos) > 1 and pos[1] in HELM_GET_SECRET:
+            return f"helm get {pos[1]} (release values and rendered Secrets can hold passwords)"
+        if pos[:1] == ["status"] and (flag(flags, "-o", "--output") or "").lower() in ("json", "yaml"):
+            return "helm status -o json/yaml (prints the release config)"
     elif base in ("terraform", "tofu"):
         pos = [t for t in args if not t.startswith("-")]
         if pos and (pos[0] == "destroy" or (pos[0] == "apply" and "-destroy" in args)):

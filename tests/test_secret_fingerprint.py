@@ -25,6 +25,10 @@ ns = args[args.index("-n") + 1]
 name = args[args.index("secret") + 1]
 store = json.load(open(os.environ["FAKE_SECRETS"]))
 key = f"{ctx}:{ns}/{name}"
+if name == "noisy":
+    print('I1101 request.go] Response Body: {"data":{"password":"UzNjcmV0LXZhbHVlLWxvbmctZW5vdWdoLXRvLWN1dA=="}}', file=sys.stderr)
+    print('Response Body: {"data":{"password":"UzNjcmV0LXZhbHVlLWxvbmctZW5vdWdoLXRvLWN1dA=="}}', file=sys.stderr)
+    sys.exit(1)
 if key not in store:
     print(f'Error from server (NotFound): secrets "{name}" not found', file=sys.stderr)
     sys.exit(1)
@@ -40,6 +44,7 @@ SECRETS = {
     "prod:shop/db": {"password": b64("S3cret-value"), "user": b64("app"), "ca.crt": b64("-----BEGIN CERTIFICATE-----\nx\n")},
     "stg:shop/db": {"password": b64("S3cret-value\n"), "user": b64("app2"), "extra": b64("")},
     "current:shop/db": {"password": b64("S3cret-value")},
+    "current:shop/broken": {"password": "!!!not-base64"},
 }
 
 
@@ -105,6 +110,22 @@ class SecretFingerprint(unittest.TestCase):
         result = self.run_script("prod:shop/missing")
         self.assertEqual(result.returncode, 2)
         self.assertIn("NotFound", result.stderr)
+
+    def test_names_that_look_like_flags_are_refused(self):
+        for spec in ("shop/-v9", "shop/--raw", "-n:shop/db", "-shop/db", "shop/db-"):
+            with self.subTest(spec=spec):
+                self.assertEqual(self.run_script(spec).returncode, 2)
+
+    def test_bad_base64_is_an_error_not_empty(self):
+        result = self.run_script("shop/broken")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("not a Secret with base64 data", result.stderr)
+
+    def test_kubectl_errors_do_not_echo_response_bodies(self):
+        result = self.run_script("shop/noisy")
+        self.assertEqual(result.returncode, 2)
+        self.assertNotIn("UzNjcmV0", result.stderr)
+        self.assertIn("<cut>", result.stderr)
 
 
 if __name__ == "__main__":

@@ -9,6 +9,7 @@ Run: python3 -m unittest discover -s tests -v
 """
 import json
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -137,16 +138,38 @@ class ForbiddenCommands(HookTestCase):
         "kubectl get --raw=/api/v1/secrets",
         "curl -s http://127.0.0.1:8001/api/v1/namespaces/shop/secrets/db",
         "wget -qO- http://localhost:8001/api/v1/secrets?limit=1",
+        # found by the independent review: short flags joined, value flags, files, encoding, log level
+        "kubectl get secrets -Ao yaml",
+        "kubectl get secret db -n x -Aojson",
+        "kubectl get --sort-by .metadata.name secret db -o yaml",
+        "kubectl get -L app secret db -o yaml",
+        "kubectl get --chunk-size 10 secret -o yaml",
+        "kubectl get -f k8s/secret.yaml -o yaml",
+        "kubectl get -k overlays/prod -o yaml",
+        "kubectl get --raw /api/v1/namespaces/x/%73ecrets/db",
+        "kubectl get -v=0 --raw /api/v1/namespaces/x/secrets#x",
+        "kubectl get secret db --sort-by=.metadata.name -v=9",
+        "oc extract secret/db --to=-",
+        "helm get values web",
+        "helm --kube-context x get manifest web",
+        "helm status web -o json",
+        "curl http://127.0.0.1:8001/api/v1/watch/namespaces/x/secrets",
+        "curl http://127.0.0.1:8001/api/v1/namespaces/x/%73ecrets/db",
     ]
     ALLOWED = [
         "kubectl get secret -o name",
         "kubectl --context x get secrets -o wide",
+        "kubectl get secrets -n mongodb-operator",
         "kubectl get secretstores -o yaml",
         "kubectl --context x describe secret db",
         "terraform -chdir=envs/prod plan -destroy",
         "kubectl get --raw /api/v1/namespaces/shop/pods",
         "kubectl get --raw /apis/secrets-store.csi.x-k8s.io/v1/secretproviderclasses",
+        "kubectl get -f deploy.yaml",
+        "kubectl get pods -v=9",
         "curl -s http://127.0.0.1:8001/api/v1/namespaces/shop/configmaps",
+        "helm status web",
+        "helm get notes web",
     ]
 
     def test_denied_in_any_flag_order(self):
@@ -160,6 +183,19 @@ class ForbiddenCommands(HookTestCase):
         for command in self.ALLOWED:
             with self.subTest(command=command):
                 self.assertNotEqual(self.decision(command)[0], "deny")
+
+    def test_allowed_commands_are_not_denied_by_settings_either(self):
+        """Simulates Claude Code rule matching: `*` matches any text, no `*` at the end means exact."""
+        settings = json.loads((KIT_DIR / "claude" / "settings.devops-kit.json").read_text(encoding="utf-8"))
+        rules = [re.compile(".*".join(map(re.escape, r[5:-1].split("*"))) + r"\Z")
+                 for r in settings["permissions"]["deny"] if r.startswith("Bash(")]
+        known_broad = {"kubectl get secret -o name", "kubectl --context x get secrets -o wide",
+                       "kubectl get secretstores -o yaml"}
+        for command in self.ALLOWED:
+            if command in known_broad:
+                continue  # documented in guide §8: the settings rule is broader than the hook
+            with self.subTest(command=command):
+                self.assertFalse(any(rule.match(command) for rule in rules))
 
     def test_secret_deny_points_to_describe(self):
         self.assertIn("kubectl describe secret", self.decision("kubectl get secret db -o yaml")[1])

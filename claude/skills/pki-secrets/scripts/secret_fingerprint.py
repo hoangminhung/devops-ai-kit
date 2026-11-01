@@ -20,6 +20,7 @@ something differs or is missing, 2 on errors (bad SPEC, kubectl failed).
 """
 import argparse
 import base64
+import binascii
 import hmac
 import json
 import os
@@ -28,7 +29,11 @@ import subprocess
 import sys
 
 # The context may hold ":" and "/" (EKS: arn:aws:eks:...:cluster/name); namespace and name never do.
-SPEC_RE = re.compile(r"^(?:(?P<context>\S+):)?(?P<namespace>[a-z0-9-]+)/(?P<name>[a-z0-9.-]+)$")
+# Namespace and name are DNS-1123 names, so they can never start with "-" and be read as a kubectl flag.
+SPEC_RE = re.compile(r"^(?:(?P<context>[^\s-]\S*):)?(?P<namespace>[a-z0-9]([a-z0-9-]*[a-z0-9])?)/"
+                     r"(?P<name>[a-z0-9]([a-z0-9.-]*[a-z0-9])?)$")
+# Long base64-like runs in kubectl errors are cut, in case a response body is echoed.
+BASE64_RUN = re.compile(r"[A-Za-z0-9+/=]{24,}")
 
 
 class SpecError(Exception):
@@ -51,9 +56,13 @@ def read_secret(spec):
     except (OSError, subprocess.SubprocessError) as exc:
         raise SpecError(f"{spec}: cannot run kubectl ({exc})")
     if out.returncode != 0:
-        raise SpecError(f"{spec}: {out.stderr.strip() or 'kubectl failed'}")
-    data = json.loads(out.stdout).get("data") or {}
-    return {key: base64.b64decode(value or "") for key, value in data.items()}
+        lines = out.stderr.strip().splitlines() or ["kubectl failed"]
+        raise SpecError(f"{spec}: {BASE64_RUN.sub('<cut>', lines[-1])[:300]}")
+    try:
+        data = json.loads(out.stdout).get("data") or {}
+        return {key: base64.b64decode(value or "", validate=True) for key, value in data.items()}
+    except (ValueError, binascii.Error, AttributeError):
+        raise SpecError(f"{spec}: kubectl output is not a Secret with base64 data")
 
 
 def kind(value):

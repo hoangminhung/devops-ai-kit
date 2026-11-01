@@ -272,9 +272,9 @@ Xem [cloud-readonly.md](cloud-readonly.md). Tóm tắt:
 
 ### 3.4. Đối chiếu giá trị secret mà không hiện giá trị
 
-Kit không bao giờ cho Claude in giá trị secret, kể cả khi bạn yêu cầu trong chat. Hook không phân biệt được yêu cầu đến từ bạn hay từ chữ Claude vừa đọc (log, README). Giá trị đã in ra còn nằm lại trong transcript trên đĩa (`~/.claude/projects/`) và được gửi tới model.
+Kit chặn các cách đã biết để Claude in giá trị secret, kể cả khi bạn yêu cầu trong chat (`get secret -o yaml` dù cờ đứng ở đâu, `--raw`, `-f`/`-k` kèm định dạng output, `-v` ≥ 6, `oc extract`, `helm get values`, `curl` vào API). Lớp bảo vệ thật vẫn là định danh read-only không có quyền đọc Secret (§3.1). Hook không phân biệt được yêu cầu đến từ bạn hay từ chữ Claude vừa đọc (log, README). Giá trị đã in ra còn nằm lại trong transcript trên đĩa (`~/.claude/projects/`) và được gửi tới model.
 
-Phần lớn trường hợp bạn chỉ cần **đối chiếu**. Nhờ Claude dùng `secret_fingerprint.py` (skill `pki-secrets`). Script chỉ in tên key, kích thước và match / differ, không in giá trị:
+Phần lớn trường hợp bạn chỉ cần **đối chiếu**. Nhờ Claude dùng `secret_fingerprint.py` (skill `pki-secrets`). Script chỉ in tên key, kích thước và match / differ, không in giá trị. Script không nằm trong danh sách allow nên mỗi lần chạy bạn sẽ được hỏi xác nhận:
 
 ```text
 so sánh shop/db-credentials trên aks-prod-ro với aks-stg-ro

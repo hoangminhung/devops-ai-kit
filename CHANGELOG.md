@@ -2,7 +2,8 @@
 
 ## Unreleased
 
-- **Security fix:** `kubectl get --raw` on the secrets API, and `curl` / `wget` to it (after `kubectl proxy`), printed secret values without a prompt (`Bash(kubectl get *)` allowed it and the hook did not see it). The hook and new deny rules now block them.
+- **Security fix:** several reads printed secret values without a prompt, because `Bash(kubectl get *)` allowed them and the hook did not see them: `kubectl get --raw` on the secrets API (also URL-encoded), joined short flags (`-Ao yaml`), value flags before the resource (`--sort-by x secret`), objects from `-f` / `-k`, log level `-v` ≥ 6, and `curl` / `wget` to the API after `kubectl proxy`. The hook now parses these like kubectl does and denies them; it also denies `oc extract`, `helm get values|manifest|all` and `helm status -o json|yaml`.
+- Settings: the secret deny rules no longer match `-n mongodb-operator` (they needed `-o` anywhere; now ` -o` / ` --output`), and the `--raw` rule no longer matches `secrets-store` paths.
 - New `pki-secrets/scripts/secret_fingerprint.py`: compares Secrets (two clusters, or one key with an exported env var) and prints only key names, sizes and match / differ, never values or hashes. `00-core` §5 and guide §3.4 explain why a request in the chat does not unlock secret values.
 
 ## 1.2.0 — 2026-10-31

@@ -30,6 +30,7 @@ when_to_use: Use when handling TLS certificates, Kubernetes secrets, credentials
   - `SPEC OTHER_SPEC`: match / differ per key (for example prod vs staging);
   - `SPEC --env KEY=ENV_VAR`: compares one key with a value the user exported in the shell before starting Claude.
   It prints no values and no hashes. Exit code 0 = all equal, 1 = something differs or is missing, 2 = error.
+  It is not on the allow list, so the user confirms each run. Use `--env` only with a value the user set; never use it to guess a value.
 
 ## 3. Leak prevention
 
