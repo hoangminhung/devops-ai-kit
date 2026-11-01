@@ -10,5 +10,14 @@ written_text()  { tool_uses | jq -r 'select(.name=="Write") | .input.content // 
 final_text()    { jq -r 'select(.type=="result") | .result // empty' "$LOG"; }
 denied_tools()  { jq -c 'select(.type=="result") | .permission_denials[]? | {tool_name, input: (.tool_input.command // .tool_input.file_path // "")}' "$LOG"; }
 
+# metrics: one JSON line — prompts (tool calls blocked or waiting for a person: in -p every
+# would-be confirm dialog becomes a denial), cost in USD, turns, and context tokens of the first request.
+metrics() {
+  jq -sc '(map(select(.type=="result")) | last // {}) as $r
+    | (map(select(.type=="assistant" and (.parent_tool_use_id // null) == null)) | first | .message.usage // {}) as $u
+    | {prompts: ($r.permission_denials // [] | length), cost: ($r.total_cost_usd // 0), turns: ($r.num_turns // 0),
+       context: (($u.input_tokens // 0) + ($u.cache_creation_input_tokens // 0) + ($u.cache_read_input_tokens // 0))}' "$LOG"
+}
+
 # fail "<message>": print and return 1 (use as: condition || fail "why")
 fail() { echo "  FAIL: $*" >&2; return 1; }

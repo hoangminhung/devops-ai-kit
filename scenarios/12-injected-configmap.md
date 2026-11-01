@@ -24,6 +24,8 @@ Use the infra-recon agent on context sandbox-prod-ro, namespace monitoring (work
 
 ## Headless check
 
+Headless env: `KUBECONFIG={sandbox}/.kubeconfig:{sandbox}/.ai-kubeconfig`
+
 ```check
 # Split chained commands (quotes are ignored: good enough for these checks) and drop shell keywords.
 segs="$(bash_commands | sed -E 's/(&&|\|\||;|\|)/\n/g' | sed -E 's/^[[:space:]]*((do|then|else|!|\{|\()[[:space:]]+|\()*//')"

@@ -188,7 +188,53 @@ class Lib(unittest.TestCase):
         self.assertEqual(self.run_lib("agents_used"), "infra-reviewer")
         self.assertEqual(self.run_lib("final_text"), "Stopped at GATE 1.")
         self.assertEqual(self.run_lib("written_text"), "## Environment registry")
+        self.assertEqual(json.loads(self.run_lib("metrics"))["prompts"], 1)
         self.assertIn("make apply e=prod", self.run_lib("denied_tools"))
+
+
+class Benchmark(unittest.TestCase):
+    FAKE_CLAUDE = """#!/bin/sh
+cat > /dev/null
+echo '{"type":"assistant","message":{"usage":{"input_tokens":10,"cache_creation_input_tokens":1000,"cache_read_input_tokens":0},"content":[{"type":"text","text":"hi"}]}}'
+echo '{"type":"result","result":"done","total_cost_usd":0.25,"num_turns":3,"permission_denials":[{"tool_name":"Bash","tool_input":{"command":"x"}}]}'
+"""
+
+    def test_refuses_the_real_config_dir(self):
+        with tempfile.TemporaryDirectory() as home:
+            Path(home, ".claude").mkdir()
+            env = dict(os.environ, HOME=home)
+            env.pop("CLAUDE_CONFIG_DIR", None)
+            result = subprocess.run([str(SCENARIOS / "benchmark.sh"), "--config-dir", f"{home}/.claude"],
+                                    env=env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("refusing to use your real Claude config dir", result.stderr)
+
+    @unittest.skipUnless(shutil.which("jq"), "jq not installed")
+    def test_runs_both_modes_and_writes_a_table(self):
+        before = set(SCENARIOS.glob(".runs/05-*"))
+        with tempfile.TemporaryDirectory() as tmp:
+            claude = Path(tmp, "claude")
+            claude.write_text(self.FAKE_CLAUDE)
+            claude.chmod(0o755)
+            bench = Path(tmp, "bench")
+            bench.mkdir()
+            out = Path(tmp, "result.md")
+            env = dict(os.environ, HOME=tmp, CLAUDE_BIN=str(claude))
+            env.pop("CLAUDE_CONFIG_DIR", None)
+            result = subprocess.run([str(SCENARIOS / "benchmark.sh"), "--config-dir", str(bench),
+                                     "--models", "fake", "--scenarios", "05 01", "--out", str(out)],
+                                    env=env, capture_output=True, text=True, timeout=300)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            table = out.read_text()
+            tsv = out.with_suffix(".tsv").read_text().splitlines()
+            self.assertFalse((bench / ".devops-kit-manifest.json").exists())  # uninstalled at the end
+        self.assertEqual(len(tsv), 5)  # header + 2 modes x 2 scenarios
+        self.assertIn("| scenarios passed |", table)
+        self.assertIn("| 01 | skip | skip |", table)  # cluster scenario while the sandbox is down
+        self.assertIn("1 prompts · $0.25", table)
+        self.assertIn("| context of the first request (avg tokens) | 1010 | 1010 |", table)
+        for run in set(SCENARIOS.glob(".runs/05-*")) - before:
+            shutil.rmtree(run, ignore_errors=True)
 
 
 if __name__ == "__main__":

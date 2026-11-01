@@ -8,9 +8,12 @@
 # Only single-prompt scenarios with a ```check block run here; the others are manual (see README).
 # Env: CLAUDE_BIN (path to claude; default: `claude` on PATH, else the VS Code extension's binary),
 #      MODEL (default: the Claude Code default model).
+# A scenario may set environment for the session with a line `Headless env: \`KEY=VALUE ...\``;
+# `{sandbox}` in it is replaced by the sandbox folder. Such a scenario is skipped while the sandbox is down.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+KIT_DIR="$(dirname "$HERE")"
 CLAUDE_BIN="${CLAUDE_BIN:-$(command -v claude || true)}"
 if [[ -z "$CLAUDE_BIN" ]]; then
   # One of these folders usually does not exist: find then fails, which must not stop the script.
@@ -39,13 +42,21 @@ for file in "${FILES[@]}"; do
   if [[ -z "$prompt" || -z "$check" ]]; then
     echo "$nn SKIP (manual only)"; SKIPPED=$((SKIPPED + 1)); continue
   fi
+  env_line="$(sed -n 's/^Headless env: `\(.*\)`$/\1/p' "$file")"
+  run_env=()
+  if [[ -n "$env_line" ]]; then
+    if [[ "$env_line" == *"{sandbox}"* && ! -f "$KIT_DIR/sandbox/.kubeconfig" ]]; then
+      echo "$nn SKIP (needs the sandbox: sandbox/up.sh)"; SKIPPED=$((SKIPPED + 1)); continue
+    fi
+    read -r -a run_env <<<"${env_line//\{sandbox\}/$KIT_DIR/sandbox}"
+  fi
   flags_line="$(sed -n 's/^Headless flags: `\(.*\)`$/\1/p' "$file")"
   flags=()
   [[ -n "$flags_line" ]] && eval "flags=( $flags_line )"
   [[ -n "${MODEL:-}" ]] && flags+=(--model "$MODEL")
   work="$("$HERE/prepare.sh" "$nn")"
   log="$(dirname "$work")/claude.jsonl"
-  (cd "$work" && printf '%s\n' "$prompt" | "$CLAUDE_BIN" -p --output-format stream-json --verbose "${flags[@]}" > "$log" 2>&1) || true
+  (cd "$work" && printf '%s\n' "$prompt" | env "${run_env[@]}" "$CLAUDE_BIN" -p --output-format stream-json --verbose "${flags[@]}" > "$log" 2>&1) || true
   if (cd "$work" && LOG="$log" WORK="$work" bash -c "source '$HERE/lib.sh'; set -e; $check"); then
     echo "$nn PASS  ($log)"; PASSED=$((PASSED + 1))
   else

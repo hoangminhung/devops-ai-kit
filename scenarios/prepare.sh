@@ -10,6 +10,7 @@
 #   Skills of this repo that are not installed yet are copied into the copy's .claude/skills/
 #   (copied, not linked: Claude Code does not read files through links that point outside the project).
 #   To test a branch, install it first (into a test config dir is safest; see scenarios/README.md).
+# - PREPARE_NO_KIT=1: copy no kit skills (baseline run without the kit, used by benchmark.sh).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,7 +19,10 @@ NN="${1:?usage: scenarios/prepare.sh <NN>}"
 SCENARIO="$(find "$HERE" -maxdepth 1 -name "${NN}-*.md" | head -1)"
 [[ -n "$SCENARIO" ]] || { echo "No scenario file $HERE/${NN}-*.md" >&2; exit 1; }
 
-WORK="$HERE/.runs/${NN}-$(date +%Y%m%d-%H%M%S)/repo"
+RUN="$HERE/.runs/${NN}-$(date +%Y%m%d-%H%M%S)"
+n=1
+while [[ -e "$RUN" ]]; do RUN="${RUN%-[0-9]}-$n"; n=$((n + 1)); done  # two runs in the same second
+WORK="$RUN/repo"
 mkdir -p "$WORK"
 cp -a "$KIT/sandbox/repo/." "$WORK/"
 FIXTURE="$(sed -n 's/^- \*\*Fixture:\*\* `\([a-z0-9-]*\)`.*/\1/p' "$SCENARIO")"
@@ -34,7 +38,7 @@ INSTALLED="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get
 COPIED=()
 for skill in "$KIT"/claude/skills/*/; do
   name="$(basename "$skill")"
-  if [[ ! -e "$CFG/skills/$name" ]]; then
+  if [[ "${PREPARE_NO_KIT:-}" != 1 && ! -e "$CFG/skills/$name" ]]; then
     mkdir -p "$WORK/.claude/skills"
     cp -R "$skill" "$WORK/.claude/skills/$name"
     rm -rf "$WORK/.claude/skills/$name/scripts/__pycache__"

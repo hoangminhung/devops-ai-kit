@@ -47,6 +47,19 @@ scenarios/run-headless.sh 05 07 08     # or: all
 - Headless sessions cannot answer a confirm dialog: anything that needs approval is denied. That is how the checks see "it stopped here".
 - Every run is a full Claude Code session, so it **costs tokens**. Run it before a release; it is **not** part of CI. Scenario 04 is manual only.
 - Logs: `scenarios/.runs/<NN>-<time>/claude.jsonl` (gitignored).
+- Cluster scenarios have a line `Headless env: \`KUBECONFIG={sandbox}/…\``; they are skipped while the sandbox is down.
+
+## Benchmark: without the kit vs with the kit (costs more tokens)
+
+Does the kit change the result? `benchmark.sh` runs the same scenarios in a **separate** Claude config dir, first without the kit, then with this checkout installed, on each model:
+
+```bash
+CLAUDE_CONFIG_DIR=~/.claude-bench claude         # once: /login, then /exit
+sandbox/up.sh                                    # optional: for the cluster scenarios
+scenarios/benchmark.sh --config-dir ~/.claude-bench --models "opus sonnet"
+```
+
+It writes a table (passed, prompts, cost, context tokens of the first request) to `scenarios/.runs/benchmark-<time>.md`, and refuses to use your real config dir. Copy the summary to `RESULTS.md` with the date, kit version and models.
 
 ## Scenario file format
 
@@ -55,6 +68,6 @@ scenarios/run-headless.sh 05 07 08     # or: all
 - **Layer:** repo only | cluster (`sandbox/up.sh`)
 - **Fixture:** `<folder in fixtures/>`      (optional: copied over the work copy)
 ## Setup / ## Prompt (```prompt block) / ## Expect (checklist + PASS/FAIL rule)
-## Headless check (optional: "Headless flags: `…`" + ```check block)
+## Headless check (optional: "Headless flags: `…`", "Headless env: `…`" + ```check block)
 ## Findings
 ```
