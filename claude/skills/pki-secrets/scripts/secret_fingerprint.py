@@ -33,7 +33,7 @@ import sys
 SPEC_RE = re.compile(r"^(?:(?P<context>[^\s-]\S*):)?(?P<namespace>[a-z0-9]([a-z0-9-]*[a-z0-9])?)/"
                      r"(?P<name>[a-z0-9]([a-z0-9.-]*[a-z0-9])?)$")
 # Long base64-like runs in kubectl errors are cut, in case a response body is echoed.
-BASE64_RUN = re.compile(r"[A-Za-z0-9+/=]{24,}")
+BASE64_RUN = re.compile(r"(?=[A-Za-z0-9+/]*[0-9+/=])[A-Za-z0-9+/=]{8,}")  # needs a digit, + / or =: keeps "NotFound"
 
 
 class SpecError(Exception):
@@ -56,8 +56,10 @@ def read_secret(spec):
     except (OSError, subprocess.SubprocessError) as exc:
         raise SpecError(f"{spec}: cannot run kubectl ({exc})")
     if out.returncode != 0:
-        lines = out.stderr.strip().splitlines() or ["kubectl failed"]
-        raise SpecError(f"{spec}: {BASE64_RUN.sub('<cut>', lines[-1])[:300]}")
+        # Only kubectl's own error line is shown (never a logged response body), with base64-like runs cut.
+        errors = [line for line in out.stderr.splitlines() if line.startswith(("error:", "Error from server"))]
+        message = BASE64_RUN.sub("<cut>", errors[-1])[:300] if errors else f"kubectl failed (exit {out.returncode})"
+        raise SpecError(f"{spec}: {message}")
     try:
         data = json.loads(out.stdout).get("data") or {}
         return {key: base64.b64decode(value or "", validate=True) for key, value in data.items()}

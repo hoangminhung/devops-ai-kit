@@ -144,8 +144,6 @@ class ForbiddenCommands(HookTestCase):
         "kubectl get --sort-by .metadata.name secret db -o yaml",
         "kubectl get -L app secret db -o yaml",
         "kubectl get --chunk-size 10 secret -o yaml",
-        "kubectl get -f k8s/secret.yaml -o yaml",
-        "kubectl get -k overlays/prod -o yaml",
         "kubectl get --raw /api/v1/namespaces/x/%73ecrets/db",
         "kubectl get -v=0 --raw /api/v1/namespaces/x/secrets#x",
         "kubectl get secret db --sort-by=.metadata.name -v=9",
@@ -155,6 +153,17 @@ class ForbiddenCommands(HookTestCase):
         "helm status web -o json",
         "curl http://127.0.0.1:8001/api/v1/watch/namespaces/x/secrets",
         "curl http://127.0.0.1:8001/api/v1/namespaces/x/%73ecrets/db",
+        # second review round
+        "kubectl get -o yaml -- secret db",
+        "kubectl get -oyaml -- secrets",
+        "helm status web -ojson",
+        "helm status web -oyaml -n x",
+        "kubectl get -v=0 --raw https://x/api/v1/namespaces/x/secrets/db",
+        "kubectl get $'secret' db -o yaml",
+        "kubectl get -n x {secret,} db -o yaml",
+        "kubectl get ${R:-secret} db -o yaml",
+        "kubectl view-secret db --all",
+        "kubectl apply view-last-applied secret/db",
     ]
     ALLOWED = [
         "kubectl get secret -o name",
@@ -166,6 +175,7 @@ class ForbiddenCommands(HookTestCase):
         "kubectl get --raw /api/v1/namespaces/shop/pods",
         "kubectl get --raw /apis/secrets-store.csi.x-k8s.io/v1/secretproviderclasses",
         "kubectl get -f deploy.yaml",
+        "kubectl get pods -o jsonpath={.items[*].metadata.name}",
         "kubectl get pods -v=9",
         "curl -s http://127.0.0.1:8001/api/v1/namespaces/shop/configmaps",
         "helm status web",
@@ -197,6 +207,13 @@ class ForbiddenCommands(HookTestCase):
             with self.subTest(command=command):
                 self.assertFalse(any(rule.match(command) for rule in rules))
 
+    def test_objects_from_files_ask_instead_of_deny(self):
+        for command in ("kubectl get -f k8s/secret.yaml -o yaml", "kubectl get -k overlays/prod -o yaml"):
+            with self.subTest(command=command):
+                decision, reason = self.decision(command)
+                self.assertEqual(decision, "ask")
+                self.assertIn("if the files name a Secret", reason)
+
     def test_secret_deny_points_to_describe(self):
         self.assertIn("kubectl describe secret", self.decision("kubectl get secret db -o yaml")[1])
 
@@ -210,6 +227,7 @@ class ForbiddenCommands(HookTestCase):
             tool, _, rest = rule[5:-1].partition(" ")
             if rest.startswith(("* ", "-chdir=")):
                 continue  # flag-first twin of another rule
+            rest = rest.replace("--raw*", "--raw /api/v1/namespaces/x")  # kubectl wants the path right after --raw
             command = f"{tool} {flags[tool]} " + " ".join(rest.replace("*", " x ").split())
             with self.subTest(rule=rule, command=command):
                 self.assertEqual(self.decision(command)[0], "deny")

@@ -354,27 +354,50 @@ def verbosity(flags):
         return 0
 
 
+def kubectl_get_parts(args):
+    """(positionals, flags) of a kubectl command, parsed like pflag; words after `--` are positionals too."""
+    args = expand_short_flags(args)
+    head, tail = (args[:args.index("--")], args[args.index("--") + 1:]) if "--" in args else (args, [])
+    pos, flags = parse_args(head, KUBECTL_VALUE_FLAGS | {"--sort-by", "--label-columns", "--chunk-size", "--template", "--raw"})
+    return pos + tail, flags, head
+
+
 def kubectl_secret_read(base, args):
     """Why this kubectl/oc command can print secret values, or None."""
-    args = expand_short_flags(args)
-    pos, flags = parse_args(args, KUBECTL_VALUE_FLAGS | {"--sort-by", "--label-columns", "--chunk-size", "--template"})
+    pos, flags, head = kubectl_get_parts(args)
     if base == "oc" and pos[:1] == ["extract"]:
         return "oc extract (writes or prints secret values)"
+    if pos[:1] == ["view-secret"]:
+        return f"{base} view-secret (plugin that prints secret values)"
+    if pos[:2] == ["apply", "view-last-applied"] and any(resource_types(p) & SECRET_RESOURCES for p in pos[2:]):
+        return f"{base} apply view-last-applied on a Secret (prints its values)"
     if pos[:1] != ["get"]:
         return None
-    if any(a == "--raw" or a.startswith("--raw=") for a in args):
-        paths = [a.split("=", 1)[1] if a.startswith("--raw=") else a for a in args if a.startswith(("/", "--raw="))]
-        if any("secrets" in url_path(path).split("/") for path in paths):
+    raw = flag(flags, "--raw")
+    if raw is not None:
+        if "secrets" in url_path(raw).split("/"):
             return f"{base} get --raw on the secrets API (prints secret values)"
         return None
-    names_secret = any(resource_types(p) & SECRET_RESOURCES for p in pos[1:])
-    unknown = any(f in flags for f in KUBECTL_UNKNOWN_OBJECTS)
-    shows_values = (any(v.lower() not in SECRET_SAFE_OUTPUT for v in output_values(args))
-                    or "--template" in flags)
-    if (names_secret or unknown) and (shows_values or verbosity(flags) >= 6):
-        what = "objects from -f / -k (they may be Secrets)" if unknown and not names_secret else "Secrets"
-        return (f"{base} get {what} with an output or log level that prints values "
+    shows_values = (any(v.lower() not in SECRET_SAFE_OUTPUT for v in output_values(head))
+                    or "--template" in flags or verbosity(flags) >= 6)
+    if not shows_values:
+        return None
+    if any(resource_types(p) & SECRET_RESOURCES for p in pos[1:]):
+        return (f"{base} get Secrets with an output or log level that prints values "
                 "(use `kubectl describe secret <name>`, or secret_fingerprint.py to compare)")
+    if any(ch in p for p in pos[1:] for ch in "${`"):
+        return f"{base} get with a shell expansion in the resource and an output that prints values (cannot tell if it is a Secret)"
+    return None
+
+
+def kubectl_unknown_objects(base, args):
+    """`kubectl get -f x.yaml -o yaml`: the files may name Secrets, so ask (not deny)."""
+    pos, flags, head = kubectl_get_parts(args)
+    if pos[:1] != ["get"] or not any(f in flags for f in KUBECTL_UNKNOWN_OBJECTS):
+        return None
+    if any(v.lower() not in SECRET_SAFE_OUTPUT for v in output_values(head)) or "--template" in flags or verbosity(flags) >= 6:
+        return (f"{base} get objects from -f / -k with an output that prints values: "
+                "if the files name a Secret, this shows its values", [], False)
     return None
 
 
@@ -399,7 +422,7 @@ def forbidden(base, args):
             return f"helm {pos[0]} {pos[1] if len(pos) > 1 else ''}".rstrip()
         if pos[:1] == ["get"] and len(pos) > 1 and pos[1] in HELM_GET_SECRET:
             return f"helm get {pos[1]} (release values and rendered Secrets can hold passwords)"
-        if pos[:1] == ["status"] and (flag(flags, "-o", "--output") or "").lower() in ("json", "yaml"):
+        if pos[:1] == ["status"] and any(v.lower() in ("json", "yaml") for v in output_values(args)):
             return "helm status -o json/yaml (prints the release config)"
     elif base in ("terraform", "tofu"):
         pos = [t for t in args if not t.startswith("-")]
@@ -653,7 +676,7 @@ def analyse_segment(segment, cwd, depth=0, exported=None):
         raise Blocked(reason)
 
     if base in ("kubectl", "oc"):
-        hit = detect_kubectl(base, args, env, cwd)
+        hit = detect_kubectl(base, args, env, cwd) or kubectl_unknown_objects(base, args)
     elif base == "helm":
         hit = detect_helm(args, env, cwd)
     elif base in ("terraform", "tofu"):

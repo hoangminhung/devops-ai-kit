@@ -28,6 +28,7 @@ key = f"{ctx}:{ns}/{name}"
 if name == "noisy":
     print('I1101 request.go] Response Body: {"data":{"password":"UzNjcmV0LXZhbHVlLWxvbmctZW5vdWdoLXRvLWN1dA=="}}', file=sys.stderr)
     print('Response Body: {"data":{"password":"UzNjcmV0LXZhbHVlLWxvbmctZW5vdWdoLXRvLWN1dA=="}}', file=sys.stderr)
+    print('error: short value UzNjcmV0 in the message', file=sys.stderr)
     sys.exit(1)
 if key not in store:
     print(f'Error from server (NotFound): secrets "{name}" not found', file=sys.stderr)
