@@ -171,7 +171,7 @@ class Lib(unittest.TestCase):
 
     def run_lib(self, expression):
         with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as fh:
-            fh.write("\n".join(json.dumps(e) for e in self.EVENTS) + "\n")
+            fh.write("\n".join(e if isinstance(e, str) else json.dumps(e) for e in self.EVENTS) + "\n")
             log = fh.name
         try:
             result = subprocess.run(["bash", "-c", f"source '{SCENARIOS / 'lib.sh'}'; {expression}"],
@@ -188,8 +188,118 @@ class Lib(unittest.TestCase):
         self.assertEqual(self.run_lib("agents_used"), "infra-reviewer")
         self.assertEqual(self.run_lib("final_text"), "Stopped at GATE 1.")
         self.assertEqual(self.run_lib("written_text"), "## Environment registry")
+        self.assertEqual(json.loads(self.run_lib("metrics"))["prompts"], 1)
+
+    @unittest.skipUnless(shutil.which("jq"), "jq not installed")
+    def test_metrics_count_subagent_denials(self):
+        denied = {"type": "tool_result", "is_error": True, "content": "Permission to use Bash has been denied."}
+        blocked = {"type": "tool_result", "is_error": True, "content": "devops-ai-kit: blocked: kubectl delete ns"}
+        self.EVENTS = [{"type": "user", "parent_tool_use_id": "t1", "message": {"content": [denied, blocked, denied]}},
+                       {"type": "result", "result": "x", "permission_denials": []}]
+        self.assertEqual(json.loads(self.run_lib("metrics"))["prompts"], 3)
+
+    @unittest.skipUnless(shutil.which("jq"), "jq not installed")
+    def test_a_non_json_line_in_the_log_does_not_break_the_helpers(self):
+        self.EVENTS = [*Lib.EVENTS[:1], "warning: not json", *Lib.EVENTS[1:]]
+        self.assertEqual(self.run_lib("final_text"), "Stopped at GATE 1.")
+        self.assertEqual(json.loads(self.run_lib("metrics"))["prompts"], 1)
         self.assertIn("make apply e=prod", self.run_lib("denied_tools"))
 
+
+class Benchmark(unittest.TestCase):
+    FAKE_CLAUDE = """#!/bin/sh
+cat > /dev/null
+echo '{"type":"assistant","message":{"usage":{"input_tokens":10,"cache_creation_input_tokens":1000,"cache_read_input_tokens":0},"content":[{"type":"text","text":"hi"}]}}'
+echo '{"type":"result","result":"done","total_cost_usd":0.25,"num_turns":3,"permission_denials":[{"tool_name":"Bash","tool_input":{"command":"x"}}]}'
+"""
+
+    def refuse(self, home, config_dir):
+        env = dict(os.environ, HOME=home)
+        env.pop("CLAUDE_CONFIG_DIR", None)
+        return subprocess.run([str(SCENARIOS / "benchmark.sh"), "--config-dir", config_dir],
+                              env=env, capture_output=True, text=True, timeout=60)
+
+    def test_refuses_the_real_config_dir_also_through_links_and_nesting(self):
+        with tempfile.TemporaryDirectory() as home:
+            Path(home, ".claude/sub").mkdir(parents=True)
+            Path(home, "link").symlink_to(Path(home, ".claude"))
+            for config_dir in (f"{home}/.claude", f"{home}/link", f"{home}/.claude/sub", home):
+                with self.subTest(config_dir=config_dir):
+                    result = self.refuse(home, config_dir)
+                    self.assertEqual(result.returncode, 2)
+                    self.assertIn("refusing to use your real Claude config dir", result.stderr)
+
+    @unittest.skipUnless(shutil.which("jq"), "jq not installed")
+    def test_runs_both_modes_and_writes_a_table(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            claude = Path(tmp, "claude")
+            claude.write_text(self.FAKE_CLAUDE)
+            claude.chmod(0o755)
+            bench = Path(tmp, "bench")
+            bench.mkdir()
+            out = Path(tmp, "result.md")
+            env = dict(os.environ, HOME=tmp, CLAUDE_BIN=str(claude))
+            env.pop("CLAUDE_CONFIG_DIR", None)
+            result = subprocess.run([str(SCENARIOS / "benchmark.sh"), "--config-dir", str(bench),
+                                     "--models", "fake", "--scenarios", "05 01", "--out", str(out)],
+                                    env=env, capture_output=True, text=True, timeout=300)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            table = out.read_text()
+            tsv = out.with_suffix(".tsv").read_text().splitlines()
+            self.assertFalse((bench / ".devops-kit-manifest.json").exists())  # uninstalled at the end
+        runs = Path(re.search(r"Work copies and logs: (\S+)", result.stderr).group(1))
+        try:
+            self.assertFalse(str(runs).startswith(str(Path.home())))  # outside $HOME: no parent CLAUDE.md
+            copies = sorted(runs.glob("05-*/repo"))
+            self.assertEqual(len(copies), 2)
+            self.assertFalse((copies[0] / ".claude/skills").exists())  # baseline: no kit skill copied
+        finally:
+            shutil.rmtree(runs, ignore_errors=True)
+        self.assertEqual(len(tsv), 5)  # header + 2 modes x 2 scenarios
+        self.assertIn("| scenarios passed |", table)
+        self.assertIn("| 01 | skip | skip |", table)  # cluster scenario while the sandbox is down
+        self.assertIn("1 prompts · $0.25", table)
+        self.assertIn("| context of the first request (avg tokens) | 1010 | 1010 |", table)
+        self.assertIn("Kit version: ", table)
+
+    @unittest.skipUnless(shutil.which("jq"), "jq not installed")
+    def test_stops_and_uninstalls_on_term(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            claude = Path(tmp, "claude")
+            claude.write_text("#!/bin/sh\ncat > /dev/null\nsleep 4\n")
+            claude.chmod(0o755)
+            bench = Path(tmp, "bench")
+            bench.mkdir()
+            out = Path(tmp, "result.md")
+            env = dict(os.environ, HOME=tmp, CLAUDE_BIN=str(claude))
+            env.pop("CLAUDE_CONFIG_DIR", None)
+            proc = subprocess.Popen([str(SCENARIOS / "benchmark.sh"), "--config-dir", str(bench), "--models", "fake",
+                                     "--scenarios", "05", "--out", str(out)], env=env,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            tsv = out.with_suffix(".tsv")
+            for _ in range(100):  # wait until the kit run has started
+                if (bench / ".devops-kit-manifest.json").exists() or proc.poll() is not None:
+                    break
+                import time
+                time.sleep(0.2)
+            import signal
+            proc.send_signal(signal.SIGTERM)
+            proc.communicate(timeout=60)
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertFalse(out.exists())
+            self.assertFalse((bench / ".devops-kit-manifest.json").exists())
+            lines = tsv.read_text().splitlines() if tsv.exists() else []
+            self.assertFalse(any(line.startswith("kit\t") for line in lines))
+
+    def test_unknown_scenario_is_refused_before_spending(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "bench").mkdir()
+            env = dict(os.environ, HOME=tmp)
+            env.pop("CLAUDE_CONFIG_DIR", None)
+            result = subprocess.run([str(SCENARIOS / "benchmark.sh"), "--config-dir", f"{tmp}/bench", "--scenarios", "99"],
+                                    env=env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("unknown scenario: 99", result.stderr)
 
 if __name__ == "__main__":
     unittest.main()
