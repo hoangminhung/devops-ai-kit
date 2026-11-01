@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Behaviour change:** mutating commands on production targets are now **denied by default** (`DEVOPS_KIT_BLOCK_PROD` was opt-in). Claude prepares a GitOps PR or gives you the command. `--env DEVOPS_KIT_BLOCK_PROD=0` brings back the confirm dialog.
+- New opt-in `DEVOPS_KIT_DEV_PATTERN`: a single, simple mutating command on a matching dev target runs without a confirm dialog, so the dialogs that remain are worth reading. Chained commands, substitutions, `-ro` contexts, production names and forbidden commands are not affected. `./check.sh` shows both settings.
+- Hook: heredoc bodies that are data (`cat > f <<'EOF'`, `kubectl apply -f - <<EOF`) are no longer read as commands, which removes false asks and denies; a body fed to a shell is still checked.
 - **Security fix:** several reads printed secret values without a prompt, because `Bash(kubectl get *)` allowed them and the hook did not see them: `kubectl get --raw` on the secrets API (also URL-encoded), joined short flags (`-Ao yaml`), value flags before the resource (`--sort-by x secret`), objects from `-f` / `-k`, log level `-v` ≥ 6, and `curl` / `wget` to the API after `kubectl proxy`. The hook now parses these like kubectl does and denies them; it also denies `oc extract`, `kubectl view-secret`, `apply view-last-applied` on a Secret, `helm get values|manifest|all` and `helm status -o json|yaml`. `kubectl get -f/-k … -o yaml` and a `get` whose resource is set by the shell (`$POD`, `{a,b}`, a glob) ask with a warning, because they may be Secrets.
 - Hook: commands after shell keywords (`for …; do …; done`, `if …; then`, `{ …; }`, `( … )`, `! …`) were not checked at all; they are now, so a forbidden command inside a loop is denied too.
 - Settings: the secret deny rules no longer match `-n mongodb-operator` (they needed `-o` anywhere; now ` -o` / ` --output`), and the `--raw` rule no longer matches `secrets-store` paths.

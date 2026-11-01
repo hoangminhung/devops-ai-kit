@@ -346,6 +346,11 @@ def check(_args):
     hook_ok = any(HOOK_MARKER in h.get("command", "")
                   for e in settings.get("hooks", {}).get("PreToolUse", []) for h in e.get("hooks", []))
     print(f"Context-guard hook: {'registered' if hook_ok else 'NOT registered'}")
+    env = settings.get("env", {})
+    block = env.get("DEVOPS_KIT_BLOCK_PROD", "1") != "0"
+    print(f"Production changes: {'blocked (default)' if block else 'ask (DEVOPS_KIT_BLOCK_PROD=0)'}")
+    dev = env.get("DEVOPS_KIT_DEV_PATTERN")
+    print(f"Dev targets       : {f'no confirm for {dev!r} (DEVOPS_KIT_DEV_PATTERN)' if dev else 'confirm every change (default)'}")
     kubeconfig = settings.get("env", {}).get("KUBECONFIG")
     if kubeconfig:
         exists = Path(kubeconfig).expanduser().exists()

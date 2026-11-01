@@ -266,9 +266,13 @@ See [cloud-readonly.md](cloud-readonly.md). Summary:
 - AWS: a `ViewOnlyAccess` profile, then `--env AWS_PROFILE=ai-readonly`.
 - GCP: a separate config folder, then `--env CLOUDSDK_CONFIG=...`.
 
-### 3.3. Hard-block every production change (optional)
+### 3.3. Production is blocked, dev can be quiet
 
-Add `--env DEVOPS_KIT_BLOCK_PROD=1`. The hook will **deny** (instead of ask) every mutating command whose target name (context, namespace, kubeconfig file name, workspace, …) matches the production pattern (`prod`, `prd`, `production`, `live`). Claude is told to prepare a GitOps PR or give you the command to run yourself. Change the pattern with `--env DEVOPS_KIT_PROD_PATTERN='<regex>'`.
+**Production (on by default).** The hook **denies** every mutating command whose target name (context, namespace, kubeconfig file name, workspace, …) matches the production pattern (`prod`, `prd`, `production`, `live`). Claude prepares a GitOps PR or gives you the command to run yourself; `/infra-task` plans production steps as "Executed by: user" or "GitOps PR" anyway. Change the pattern with `--env DEVOPS_KIT_PROD_PATTERN='<regex>'`. To get a confirm dialog instead (not recommended), use `--env DEVOPS_KIT_BLOCK_PROD=0`.
+
+**Dev and sandbox (optional).** Too many confirm dialogs teach people to click "Yes" without reading, and then the production line is missed too. If you trust a set of dev targets, add for example `--env DEVOPS_KIT_DEV_PATTERN='^(kind-|minikube|dev-)'`. Then a **single, simple** mutating command whose first target (context, workspace, subscription, profile …) matches runs without a dialog. Everything else still asks: chained commands (`&&`, `;`, `|`), `$(…)`, `bash -c`, `-ro` contexts, production names, and the forbidden commands, which stay denied. Match only names that cannot be shared environments.
+
+`./check.sh` shows both settings.
 
 ### 3.4. Compare secret values without showing them
 
