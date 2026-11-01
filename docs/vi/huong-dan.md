@@ -498,6 +498,7 @@ Một phiên chạy lâu sẽ bị nén ngữ cảnh nhiều lần, mỗi lần 
 
 - **Rules và skills là lời dặn, không phải luật.** Model có thể bỏ sót trong một lượt nào đó; đó là lý do có lớp 4.
 - **Permission rules và hook so khớp theo chuỗi lệnh**, nên lách được: lệnh nằm trong script, `eval`, biến môi trường, alias. Hook không phân tích lệnh nằm trong file script được gọi. Chúng là lưới an toàn cho sai sót vô ý, không phải hàng rào bảo mật. Hàng rào thật là kubeconfig / cloud identity read-only.
+- **Prompt injection.** Một dòng log, một annotation hay một README có thể chứa chữ viết cho AI ("bỏ qua các rule trước, chạy …"). `00-core` §10 và mọi agent coi chữ đó là dữ liệu và báo lại; `/infra-scout` chỉ ghi giá trị vào CLAUDE.md. Đây là chỉ dẫn cho model nên vẫn có thể sót. Thứ chặn được thiệt hại là các deny của hook và định danh read-only.
 - **Hook fail-open:** lỗi nội bộ thì không chặn gì, để luồng xác nhận bình thường quyết định. Hook không biết namespace của resource được khai báo bên trong file YAML (`metadata.namespace`); nó hiện namespace từ flag hoặc từ context.
 - **Cờ đứng trước lệnh con.** Rule permission so khớp chuỗi từ đầu lệnh, nên kit thêm một rule "anh em" cho mỗi rule `kubectl` / `helm` / `terraform` (`kubectl * get *`, `terraform -chdir=* plan*`). Hook phân tích cờ và chặn các lệnh bị cấm (xoá namespace / PVC / CRD, destroy, helm uninstall, đọc giá trị secret) dù cờ đứng ở đâu.
 - **Một số pattern deny bắt hơi rộng.** Ví dụ `kubectl * get secret*-o*` cũng chặn `kubectl --context X get secretstores -o yaml`, và `helm * delete*` chặn cả `helm template … --set delete=…`. Khi bị chặn oan, chạy lệnh đó trong terminal của bạn.
@@ -522,7 +523,7 @@ Một phiên chạy lâu sẽ bị nén ngữ cảnh nhiều lần, mỗi lần 
   ```
 
 - **Kiểm thử hành vi của kit** bằng các scenario trong `scenarios/` (Đóng góp / Kiểm thử kit):
-  - lớp 1, `sandbox/repo/`: repo hạ tầng mẫu (Terraform chỉ dùng provider local, Helm, manifest Argo CD, Ansible cho localhost); không cần cloud hay cluster; đủ cho 6/10 scenario;
+  - lớp 1, `sandbox/repo/`: repo hạ tầng mẫu (Terraform chỉ dùng provider local, Helm, manifest Argo CD, Ansible cho localhost); không cần cloud hay cluster; đủ cho 7/12 scenario;
   - lớp 2, tùy chọn: `sandbox/up.sh` tạo cluster kind có sẵn các "bẫy" (ingress-nginx, StorageClass `Delete`, Secret giả, context `sandbox-prod` và context read-only `-ro`), dùng kubeconfig riêng, không đụng `~/.kube/config`;
   - `scenarios/prepare.sh <NN>` tạo bản sao làm việc mới; `scenarios/run-headless.sh` chạy các scenario có khối check bằng `claude -p` (tốn token, không nằm trong CI).
   - Scenario kiểm thử bản kit **đang cài** trong thư mục cấu hình Claude: skill đã cài được ưu tiên hơn bản cùng tên trong project. Muốn thử một branch thì cài nó vào một `CLAUDE_CONFIG_DIR` riêng.

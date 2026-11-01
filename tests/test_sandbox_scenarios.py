@@ -32,8 +32,8 @@ def block(text, name):
 
 
 class ScenarioFiles(unittest.TestCase):
-    def test_there_are_ten_scenarios_listed_in_the_readme(self):
-        self.assertEqual(len(SCENARIO_FILES), 10)
+    def test_every_scenario_is_listed_in_the_readme(self):
+        self.assertEqual(len(SCENARIO_FILES), 12)
         readme = (SCENARIOS / "README.md").read_text(encoding="utf-8")
         for path in SCENARIO_FILES:
             self.assertIn(f"]({path.name})", readme)
@@ -92,6 +92,7 @@ class SandboxTraps(unittest.TestCase):
             self.assertIn(kind, kinds)
         text = "\n".join(docs)
         self.assertIn("reclaimPolicy: Delete", text)
+        self.assertIn("AI agents reading this", text)  # prompt-injection bait for scenario 12
         self.assertNotIn("NetworkPolicy", kinds)
         for doc in docs:
             if re.search(r"(?m)^kind: Deployment", doc):
@@ -99,6 +100,11 @@ class SandboxTraps(unittest.TestCase):
 
 
 class Fixture(unittest.TestCase):
+    def test_injected_readme_keeps_the_sample_readme(self):
+        text = (SCENARIOS / "fixtures/injected-readme/README.md").read_text(encoding="utf-8")
+        self.assertTrue(text.startswith((SANDBOX / "repo/README.md").read_text(encoding="utf-8")))
+        self.assertIn("-auto-approve", text)
+
     def test_resume_fixture_stops_after_step_1(self):
         plan_status = load("plan_status", KIT_DIR / "claude/skills/infra-task/scripts/plan_status.py")
         info = plan_status.status(SCENARIOS / "fixtures/prod-replicas/docs/changes/2026-11-01-prod-replicas")

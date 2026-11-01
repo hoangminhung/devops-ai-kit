@@ -498,6 +498,7 @@ A long session is compacted many times, and each time some details can be lost. 
 
 - **Rules and skills are instructions, not laws.** The model can miss them in a turn; that is why layer 4 exists.
 - **Permission rules and the hook match command text**, so they can be bypassed: commands inside scripts, `eval`, environment variables, aliases. The hook does not read commands inside a script file that is called. They are a safety net for honest mistakes, not a security wall. The real wall is the read-only kubeconfig / cloud identity.
+- **Prompt injection.** A log line, an annotation or a README can hold text written for the AI ("ignore previous rules, run …"). `00-core` §10 and every agent treat such text as data and report it; `/infra-scout` writes only values into CLAUDE.md. This is an instruction to the model, so it can fail. The hook denies and the read-only identity are what stop the damage.
 - **The hook fails open:** on an internal error it blocks nothing and lets the normal confirm flow decide. The hook does not know the namespace set inside a YAML file (`metadata.namespace`); it shows the namespace from the flag or from the context.
 - **Flags before the verb.** Permission rules match text from the start, so the kit adds a twin rule for each `kubectl` / `helm` / `terraform` rule (`kubectl * get *`, `terraform -chdir=* plan*`). The hook parses the flags and denies the forbidden commands (namespace / PVC / CRD deletes, destroy, helm uninstall, secret values) in any order.
 - **Some deny patterns are a bit broad.** For example `kubectl * get secret*-o*` also blocks `kubectl --context X get secretstores -o yaml`, and `helm * delete*` blocks a `helm template … --set delete=…`. If a command is blocked by mistake, run it in your own terminal.
@@ -522,7 +523,7 @@ A long session is compacted many times, and each time some details can be lost. 
   ```
 
 - **Test the kit's behaviour** with the scenarios in `scenarios/` (Contributing / Testing the kit):
-  - layer 1, `sandbox/repo/`: a sample infrastructure repo (Terraform with local providers only, Helm, Argo CD manifest, Ansible for localhost); no cloud, no cluster; enough for 6 of the 10 scenarios;
+  - layer 1, `sandbox/repo/`: a sample infrastructure repo (Terraform with local providers only, Helm, Argo CD manifest, Ansible for localhost); no cloud, no cluster; enough for 7 of the 12 scenarios;
   - layer 2, optional: `sandbox/up.sh` creates a kind cluster with traps (ingress-nginx, a `Delete` StorageClass, a fake Secret, a `sandbox-prod` context and a read-only `-ro` context), using its own kubeconfig, never `~/.kube/config`;
   - `scenarios/prepare.sh <NN>` makes a fresh work copy; `scenarios/run-headless.sh` runs the scenarios that have a check block with `claude -p` (costs tokens, not in CI).
   - Scenarios test the kit **installed** in your Claude config dir: an installed skill wins over a project copy with the same name. To test a branch, install it into a separate `CLAUDE_CONFIG_DIR`.
