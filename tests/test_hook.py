@@ -507,6 +507,10 @@ class Heredocs(HookTestCase):
         doc = "python3 - <<EOF\nprint('kubectl delete pod web')\nEOF"
         self.assertEqual(self.decision(doc), (None, None))
 
+    def test_backslash_delimiter_is_a_quoted_delimiter(self):
+        doc = "cat > f.sh <<\\EOF\nkubectl --context x delete ns shop\nEOF"
+        self.assertEqual(self.decision(doc), (None, None))
+
     def test_yaml_heredoc_to_kubectl_still_asks_for_the_apply(self):
         decision, reason = self.decision("kubectl apply -f - <<EOF\napiVersion: v1\nkind: ConfigMap\nEOF")
         self.assertEqual(decision, "ask")
@@ -536,6 +540,12 @@ class Heredocs(HookTestCase):
             f"cat > a.txt <<'EOF'\nno end line\n{delete}",   # no end line: keep everything
             f"kubectl get pods <<<a\n{delete}",              # here-string, not a heredoc
             f"kubectl get pods # <<EOF\n{delete}",           # in a comment
+            # second review round
+            f"cat<<EOF|bash\n{delete}\nEOF",                 # no spaces around the pipe
+            f"cat <<EOF \\\n| bash\n{delete}\nEOF",           # line goes on below
+            f"cat <<EOF > >(bash)\n{delete}\nEOF",           # process substitution
+            f"tee >(sh) <<EOF\n{delete}\nEOF",
+            f'cat "a\\" <<EOF"\n{delete}\nEOF',              # << inside double quotes with \"
         ):
             with self.subTest(command=command):
                 self.assertEqual(self.decision(command)[0], "deny")
@@ -558,6 +568,10 @@ class DevPatternIsStrict(HookTestCase):
             "ansible-playbook -i dev-inv site.yml",
             "az --subscription dev-sub group delete -n rg",
             "make deploy e=dev-a",
+            "kubectl --context kind-a exec pod -- rm -rf /data",
+            "kubectl --context kind-a debug node/x -it --image=busybox",
+            "helm --kube-context kind-a upgrade x ./chart --post-renderer ./run.sh",
+            "helm --kube-context kind-a upgrade x oci://registry.example/chart",
         ):
             with self.subTest(command=command):
                 self.assertNotEqual(self.decision(command, env=self.ENV)[0], "allow")

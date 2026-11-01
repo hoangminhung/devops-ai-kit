@@ -730,6 +730,8 @@ def heredoc_start(line):
         if quote:
             if ch == quote:
                 quote = None
+            elif ch == "\\" and quote == '"':
+                i += 1  # \" inside double quotes does not close them
         elif ch in "'\"":
             quote = ch
         elif ch == "\\":
@@ -742,20 +744,20 @@ def heredoc_start(line):
             found.append(i)
             i += 1
         i += 1
-    if len(found) != 1:
-        return None
+    if len(found) != 1 or line.rstrip().endswith("\\"):
+        return None  # several heredocs, or the line goes on below (`<<EOF \` + `| bash`)
     pos = found[0]
     rest = line[pos + 2:]
     strip_tabs = rest.startswith("-")
     word = re.match(r"\s*(\S+)", rest[1:] if strip_tabs else rest)
     if not word:
         return None
-    raw = re.split(r"[;|&<>()]", word.group(1))[0]
-    delim = raw.replace("'", "").replace('"', "")
-    if not delim:
+    raw = word.group(1)
+    # Anything that could pass the body to code: pipes, chains, background, (process) substitution.
+    if re.search(r"[;|&()`$]", line[:pos] + line[pos:]):
         return None
-    after = (rest[1:] if strip_tabs else rest)[word.end():]
-    if re.search(r"[;|&]", after):  # `cat <<EOF | bash`, `<<EOF && …`: the body may run
+    delim = re.sub(r"['\"\\]", "", raw)
+    if not delim or re.search(r"[<>]", delim):
         return None
     return pos, delim, raw != delim, strip_tabs
 
@@ -765,7 +767,10 @@ def data_feeder(text):
     segments = SEGMENT_SPLIT.split(text)
     if len(segments) != 1:
         return False
-    tokens, _ = peel(tokenize(segments[0]))
+    try:
+        tokens, _ = peel(shlex.split(segments[0], posix=True))
+    except ValueError:
+        return False  # unbalanced quotes: do not guess
     if not tokens:
         return False
     base = re.split(r"[\\/]", tokens[0])[-1]
@@ -809,6 +814,7 @@ def strip_heredocs(command):
 # Characters that make a command more than one plain call: chains, background, pipes,
 # redirection, substitution, comments, variables. Any of them → no "allow".
 NOT_SIMPLE = re.compile(r"[\n;&|<>`$#(){}]")
+RUNS_CODE = {"exec", "attach", "debug", "cp", "port-forward", "proxy", "run", "--post-renderer"}
 # Flags that send a command somewhere else than its named context.
 REDIRECT_FLAGS = ("--server", "-s", "--cluster", "--user", "--token", "--as", "--as-group",
                   "--kube-apiserver", "--kube-token", "--kube-as-user", "--kube-as-group")
@@ -821,6 +827,10 @@ def single_simple_command(command):
     tokens, env = peel(tokenize(command))
     if not tokens or re.split(r"[\\/]", tokens[0])[-1] not in ("kubectl", "helm", "terraform", "tofu"):
         return False
+    if any(t in RUNS_CODE for t in tokens):
+        return False  # kubectl exec / debug … or helm --post-renderer run any code
+    if any(re.match(r"(oci|https?)://", t) for t in tokens):
+        return False  # a chart from the network
     return not any(t.split("=", 1)[0] in REDIRECT_FLAGS or t.startswith("-auto-approve") for t in tokens)
 
 
