@@ -936,11 +936,15 @@ def push_destinations(args, cwd):
     if repo_flag and not pos:
         pos = [repo_flag]
     current = run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=cwd) or "?"
-    # `refs/heads/*:refs/heads/*` and `:` (matching) push many branches, like --all
-    wide = any("*" in spec or spec.lstrip("+") == ":" for spec in pos[1:])
-    if wide or any(a in ("--all", "--mirror", "--branches") for a in args):
-        branches = run(["git", "for-each-ref", "--format=%(refname:short)", "refs/heads"], cwd=cwd).split()
-        return (pos[0] if pos else "origin"), branches or ["?"]
+    local = lambda: run(["git", "for-each-ref", "--format=%(refname:short)", "refs/heads"], cwd=cwd).split()
+    if any(a in ("--all", "--mirror", "--branches") for a in args) or any(s.lstrip("+") == ":" for s in pos[1:]):
+        return (pos[0] if pos else "origin"), local() or ["?"]
+    if any("*" in spec for spec in pos[1:]):
+        # `refs/heads/feat/*:refs/heads/feat/*` pushes the local branches that match the source pattern
+        patterns = [spec.lstrip("+").split(":")[0].replace("refs/heads/", "", 1) for spec in pos[1:] if "*" in spec]
+        matched = [b for b in local() if any(fnmatch.fnmatchcase(b, p) for p in patterns)]
+        rest = [spec.lstrip("+").split(":")[-1].replace("refs/heads/", "", 1) for spec in pos[1:] if "*" not in spec]
+        return pos[0], matched + rest or ["?"]
     if len(pos) > 1:
         dests = []
         for spec in pos[1:]:
@@ -982,7 +986,14 @@ def detect_git_push(args, cwd):
                               for a in args) else ""
     url = run(["git", "remote", "get-url", remote], cwd=cwd) if re.fullmatch(r"[\w.-]+", remote) else ""
     # A push to work branches deploys nothing, also in a production GitOps repo: that is how its PRs start.
-    checked = [] if all(work_branch(b) for b in branches) else branches + [repo, remote, url]
+    # --mirror / --prune also delete remote branches the local repo does not have, so they never qualify.
+    deletes = any(a in ("--mirror", "--prune") for a in args)
+    work_only = all(work_branch(b) for b in branches) and not deletes
+    checked = [] if work_only else [b for b in branches if not work_branch(b)] + [repo, remote, url]
+    if deletes and re.fullmatch(r"[\w.-]+", remote):
+        # branches the remote had at the last fetch (no network): the ones --mirror / --prune may delete
+        tracked = run(["git", "for-each-ref", "--format=%(refname:short)", f"refs/remotes/{remote}"], cwd=cwd).split()
+        checked += [t.split("/", 1)[-1] for t in tracked]
     return (f"git push{force} → repo={repo} remote={remote} branch={','.join(branches)} "
             "(if this repo is watched by Argo CD/Flux, this deploys)", checked, False)
 

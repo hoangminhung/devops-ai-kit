@@ -610,6 +610,25 @@ class GitPushTargets(HookTestCase):
             with self.subTest(command=command):  # the current branch is a work branch, so it asks, but shows the remote
                 self.assertIn("remote=prod-remote", self.push(command, block="0", field="permissionDecisionReason"))
 
+    def test_pushes_that_delete_remote_branches_get_no_work_branch_exemption(self):
+        clone = self.workdir / "only-feat"
+        subprocess.run(["git", "init", "-q", "-b", "feat/a", str(clone)], check=True)
+        subprocess.run(["git", "-C", str(clone), "-c", "user.email=t@example.com", "-c", "user.name=t",
+                        "commit", "-q", "--allow-empty", "-m", "x"], check=True)
+        for command in ("git push --mirror prod-remote", "git push --all --prune prod-remote",
+                        "git push --prune prod-remote 'refs/heads/*:refs/heads/*'"):
+            with self.subTest(command=command):
+                self.assertEqual(self.push(command, cwd=clone), "deny")
+
+    def test_prune_checks_the_branches_the_remote_has(self):
+        subprocess.run(["git", "-C", str(self.repo), "fetch", "-q", "origin"], check=True)  # origin/live is tracked
+        self.assertEqual(self.push("git push --prune origin 'refs/heads/*:refs/heads/*'"), "deny")
+        self.assertEqual(self.push("git push --prune origin 'refs/heads/feat/*:refs/heads/feat/*'"), "deny")
+
+    def test_work_branches_are_not_checked_by_name_in_a_mixed_push(self):
+        self.assertEqual(self.push("git push origin feat/live-vs-declared main"), "ask")
+        self.assertEqual(self.push("git push origin 'refs/heads/feat/*:refs/heads/feat/*'"), "ask")
+
     def test_remote_url_is_checked(self):
         subprocess.run(["git", "-C", str(self.repo), "remote", "add", "deploy", "https://git.example/gitops-prod.git"],
                        check=True)
