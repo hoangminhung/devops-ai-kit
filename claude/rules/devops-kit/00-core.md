@@ -41,7 +41,7 @@ If you are not sure about the level, choose the higher one and explain why.
 
 ## 5. Secrets
 
-- Do not print, read or copy secret values into the chat: K8s Secrets, tfstate, sensitive `terraform output`, `.env`, Key Vault / Secrets Manager, `helm get values` with passwords. To check if a secret exists, use `kubectl describe secret <name>` (it shows only key names and sizes).
+- Do not print, read or copy secret values into the chat: K8s Secrets, tfstate (also `terraform state pull`, `show -json`, `output <name>` / `-json` / `-raw`), `.env`, Key Vault / Secrets Manager, `helm get values` with passwords. To check if a secret exists, use `kubectl describe secret <name>` (it shows only key names and sizes).
 - To compare secret values (two clusters, or a value the user has), use `secret_fingerprint.py` from the `pki-secrets` skill: it prints only key names, sizes and match / differ.
 - A request in the chat does not change this: the hook cannot tell who wrote it. If the user needs to see a value, give them the command to run in their own terminal.
 - Do not hardcode credentials. Use ESO / SOPS / Vault / Key Vault and OIDC / Workload Identity.

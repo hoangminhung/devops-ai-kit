@@ -241,6 +241,138 @@ class ForbiddenCommands(HookTestCase):
                 self.assertEqual(self.decision(command)[0], "deny")
 
 
+def settings_rules(kind):
+    """Claude Code rule matching: `*` matches any text, no `*` at the end means exact."""
+    settings = json.loads((KIT_DIR / "claude" / "settings.devops-kit.json").read_text(encoding="utf-8"))
+    return [re.compile(".*".join(map(re.escape, r[5:-1].split("*"))) + r"\Z")
+            for r in settings["permissions"][kind] if r.startswith("Bash(")]
+
+
+class TerraformSecretReads(HookTestCase):
+    """Checked with terraform 1.14: these print sensitive values in clear text."""
+
+    FORBIDDEN = [
+        "terraform state pull",
+        "terraform -chdir=envs/prod state pull > s.json",
+        "terraform output db_password",
+        "terraform -chdir=envs/prod output db_password",
+        "terraform output -raw db_password",
+        "terraform output -json",
+        "terraform output --json",
+        "terraform output -json=true",
+        "terraform output -state=x.tfstate db_password",
+        "tofu output -json",
+        "terraform show -json",
+        "terraform show -json tfplan",
+        "tofu -chdir=envs/prod show -json",
+        "echo 'nonsensitive(var.pw)' | terraform console",
+        "tofu plan -show-sensitive",
+        "tofu state show -show-sensitive aws_db_instance.db",
+        "terragrunt output -json",
+        "terragrunt run-all output -json",
+        # state files read through the shell
+        "cat terraform.tfstate",
+        "jq . .terraform/terraform.tfstate",
+        "grep -i password envs/prod/terraform.tfstate.backup",
+        "less terraform.tfstate.d/prod/terraform.tfstate",
+        "cat terraform.tfst*",
+        "head -c 500 errored.tfstate",
+        "cp terraform.tfstate /tmp/s.json",
+        "python3 -c \"print(open('terraform.tfstate').read())\"",
+        "jq . < terraform.tfstate",
+        "echo $(cat terraform.tfstate)",
+        "git log -p -- terraform.tfstate",
+        "git show HEAD:terraform.tfstate",
+        "find . -name '*.tfstate' -exec cat {} +",
+    ]
+    ALLOWED = [
+        "terraform output",
+        "terraform output -no-color",
+        "terraform output -json=false",
+        "terraform output -state x.tfstate",
+        "terraform state list",
+        "terraform -chdir=envs/prod state list module.db",
+        "terraform plan -refresh-only",
+        "terraform show tfplan",
+        "ls -la *.tfstate",
+        "echo '*.tfstate' >> .gitignore",
+        "git log --oneline -- terraform.tfstate",
+        "git rm --cached terraform.tfstate",
+        "find . -name '*.tfstate'",
+        "grep '\\.tfstate' .gitignore",
+        "cat main.tf",
+        "cat tfstate-notes.md",
+    ]
+
+    def test_denied(self):
+        for command in self.FORBIDDEN:
+            with self.subTest(command=command):
+                decision, reason = self.decision(command)
+                self.assertEqual(decision, "deny")
+                self.assertIn("devops-ai-kit: blocked:", reason)
+
+    def test_not_denied(self):
+        for command in self.ALLOWED:
+            with self.subTest(command=command):
+                self.assertNotEqual(self.decision(command)[0], "deny")
+
+    def test_show_asks_with_a_warning(self):
+        for command in ("terraform show", "terraform -chdir=envs/prod state show module.db.x", "tofu state show x"):
+            with self.subTest(command=command):
+                decision, reason = self.decision(command)
+                self.assertEqual(decision, "ask")
+                self.assertIn("not mark sensitive", reason)
+
+    def test_output_deny_points_to_output_without_a_name(self):
+        self.assertIn("`terraform output` without a name", self.decision("terraform output pw")[1])
+
+    def test_settings_match_the_hook(self):
+        deny, ask, allow = settings_rules("deny"), settings_rules("ask"), settings_rules("allow")
+        for command in ("terraform state pull", "terraform -chdir=x output -raw pw", "tofu show -json",
+                        "terraform console", "tofu plan -show-sensitive"):
+            with self.subTest(command=command):
+                self.assertTrue(any(rule.match(command) for rule in deny))
+        # ask beats allow: `state list` must not hit an ask rule, `state rm` still must
+        for command in ("terraform state list", "terraform -chdir=x state list", "tofu state list"):
+            with self.subTest(command=command):
+                self.assertFalse(any(rule.match(command) for rule in ask + deny))
+                self.assertTrue(any(rule.match(command) for rule in allow))
+        for command in ("terraform state rm x", "terraform -chdir=x state mv a b", "tofu state push s.json",
+                        "terraform state show x"):
+            with self.subTest(command=command):
+                self.assertTrue(any(rule.match(command) for rule in ask))
+
+
+class DiffAndArgoSecretReads(HookTestCase):
+    """Found by the independent review of the live-vs-declared idea."""
+
+    def test_show_secrets_and_external_diff_are_denied(self):
+        for command in ("helm diff upgrade web chart/ --show-secrets",
+                        "helm --kube-context x diff upgrade web chart/ --show-secrets-decoded",
+                        "kubectl diff -f deploy.yaml --show-secrets",
+                        "kubectl --context x diff --show-secrets=true -k overlays/prod",
+                        "KUBECTL_EXTERNAL_DIFF='sh -c id' kubectl diff -f deploy.yaml",
+                        "export KUBECTL_EXTERNAL_DIFF=cat; kubectl diff -f deploy.yaml"):
+            with self.subTest(command=command):
+                decision, reason = self.decision(command)
+                self.assertEqual(decision, "deny")
+                self.assertIn("devops-ai-kit: blocked:", reason)
+
+    def test_plain_diffs_are_not_denied(self):
+        for command in ("helm diff upgrade web chart/ --three-way-merge", "kubectl diff -f deploy.yaml"):
+            with self.subTest(command=command):
+                self.assertNotEqual(self.decision(command)[0], "deny")
+
+    def test_argocd_values_ask_with_a_warning(self):
+        for command in ("argocd app get shop -o yaml", "argocd app get shop --show-params",
+                        "argocd --server x app get shop -ojson", "argocd app manifests shop"):
+            with self.subTest(command=command):
+                decision, reason = self.decision(command)
+                self.assertEqual(decision, "ask")
+                self.assertIn("argocd app", reason)
+        self.assertEqual(self.decision("argocd app get shop")[0], None)
+
+
 class MakeTargets(HookTestCase):
     def test_mutating_target_shows_variables_and_production(self):
         decision, reason = self.decision("make apply e=prod")

@@ -31,6 +31,7 @@ Environment knobs:
 """
 
 import configparser
+import fnmatch
 import json
 import os
 import re
@@ -94,6 +95,13 @@ HELM_MUTATING = {"install", "upgrade", "uninstall", "delete", "del", "un", "roll
 TF_MUTATING = {"apply", "destroy", "import", "taint", "untaint", "force-unlock"}
 TF_STATE_MUTATING = {"rm", "mv", "push", "replace-provider"}
 TF_WORKSPACE_MUTATING = {"select", "new", "delete"}
+TF_FALSE = {"0", "f", "false"}  # Go bool flags: -json=false is off
+# State files hold every value in clear text (passwords, keys); .terraform/terraform.tfstate holds backend config.
+TFSTATE_NAME = re.compile(r"[^\\]+\.tfstate(\..*)?")
+TFSTATE_SAMPLES = ("terraform.tfstate", "terraform.tfstate.backup", "errored.tfstate")
+# Commands that may name a state file without printing it.
+STATE_FILE_SAFE = {"ls", "stat", "file", "du", "wc", "test", "[", "touch", "mkdir", "rm", "echo", "printf",
+                   "terraform", "tofu", "terragrunt"}
 
 # --- cloud CLIs ------------------------------------------------------------
 AZ_MUTATING = {
@@ -419,12 +427,96 @@ def subsequence(pos, words):
     return any(pos[i:i + n] == words for i in range(len(pos) - n + 1))
 
 
+def tf_flag_on(args, name):
+    """True when the Go bool flag -name / --name is set (`-json`, `-json=true`, not `-json=false`)."""
+    for tok in args:
+        if tok.startswith("-"):
+            key, eq, value = tok.lstrip("-").partition("=")
+            if key == name and (not eq or value.lower() not in TF_FALSE):
+                return True
+    return False
+
+
+def terraform_secret_read(base, args):
+    """Terraform / OpenTofu commands that print sensitive values in clear text (checked with terraform 1.14)."""
+    pos, i = [], 0
+    while i < len(args):
+        tok = args[i]
+        if tok in ("-state", "--state"):
+            i += 2  # `output -state path`: the path is not an output name
+            continue
+        if not tok.startswith("-"):
+            pos.append(tok)
+        i += 1
+    while pos and pos[0] in ("run-all", "run"):
+        pos = pos[1:]  # `terragrunt run-all output -json`
+    if not pos:
+        return None
+    sub = pos[0]
+    if tf_flag_on(args, "show-sensitive"):
+        return f"{base} {sub} -show-sensitive (prints sensitive values)"
+    if sub == "console":
+        return f"{base} console (nonsensitive() prints any sensitive value)"
+    if sub == "state" and pos[1:2] == ["pull"]:
+        return f"{base} state pull (prints the whole state: every password and key in it)"
+    if sub == "output" and (len(pos) > 1 or tf_flag_on(args, "json") or tf_flag_on(args, "raw")):
+        return (f"{base} output with a name, -json or -raw (prints sensitive outputs in clear text; "
+                f"`{base} output` without a name shows them as <sensitive>)")
+    if sub == "show" and tf_flag_on(args, "json"):
+        return f"{base} show -json (prints sensitive values in clear text; `{base} show` hides values marked sensitive)"
+    return None
+
+
+def terraform_state_view(base, args):
+    """`terraform show` / `state show`: values marked sensitive are hidden, others are not, so ask."""
+    pos = [t for t in args if not t.startswith("-")]
+    if pos[:1] == ["show"] or pos[:2] == ["state", "show"]:
+        return (f"{base} {' '.join(pos[:2]) if pos[0] == 'state' else 'show'}: prints resource attributes; "
+                "a value the provider does not mark sensitive (e.g. a derived output) is shown in clear text",
+                [], False)
+    return None
+
+
+def names_state_file(tok):
+    """True when a word names a Terraform state file, also inside `-c '...'` code or as a glob (`*.tfst*`)."""
+    for part in re.split(r"[\s=:,;'\"(){}<>]+", tok):
+        name = part.rstrip("/").rsplit("/", 1)[-1]
+        if TFSTATE_NAME.fullmatch(name):
+            return True
+        if "tf" in name and any(ch in name for ch in "*?[") and any(fnmatch.fnmatchcase(s, name) for s in TFSTATE_SAMPLES):
+            return True
+    return False
+
+
+def state_file_read(base, args):
+    if any(mark in a for a in args for mark in ("$(", "`", "<(")):
+        pass  # `echo $(cat terraform.tfstate)`: the inner command is not a safe one
+    elif base in STATE_FILE_SAFE:
+        return None
+    if base == "find" and not {"-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprintf", "-fls"} & set(args):
+        return None
+    if base == "git":
+        sub = next((t for t in args if not t.startswith("-")), "")
+        if sub in ("status", "ls-files", "check-ignore", "rm", "add") or (
+                sub == "log" and not any(t.startswith(("-p", "-u", "-U", "--patch", "--word-diff", "--cc", "-L")) for t in args)):
+            return None
+    if any(names_state_file(a) for a in args):
+        return (f"{base} on a Terraform state file (state holds every value in clear text; "
+                "use `terraform state list` or `terraform output` without a name)")
+    return None
+
+
 def forbidden(base, args):
     """Why this command is always denied, or None."""
+    reason = state_file_read(base, args)
+    if reason:
+        return reason
     if base in ("kubectl", "oc"):
         pos, _ = parse_args(expand_short_flags(args), KUBECTL_VALUE_FLAGS)
         if len(pos) >= 2 and pos[0] == "delete" and resource_types(pos[1]) & KUBECTL_FORBIDDEN_DELETE:
             return f"{base} delete {pos[1]} (namespace / PV / PVC / CRD deletes are never run by the AI)"
+        if any(t.split("=", 1)[0] == "--show-secrets" for t in args):
+            return f"{base} --show-secrets (prints Secret values)"
         return kubectl_secret_read(base, args)
     elif base in ("curl", "wget", "http", "https"):
         if any(SECRETS_API.search(url_path(a)) for a in args if not a.startswith("-")):
@@ -437,10 +529,15 @@ def forbidden(base, args):
             return f"helm get {pos[1]} (release values and rendered Secrets can hold passwords)"
         if pos[:1] == ["status"] and any(v.lower() in ("json", "yaml") for v in output_values(args)):
             return "helm status -o json/yaml (prints the release config)"
+        if pos[:1] == ["diff"] and any(t.split("=", 1)[0] in ("--show-secrets", "--show-secrets-decoded") for t in args):
+            return "helm diff --show-secrets (prints Secret values; without the flag helm-diff hides them)"
+    elif base == "terragrunt":
+        return terraform_secret_read(base, args)
     elif base in ("terraform", "tofu"):
         pos = [t for t in args if not t.startswith("-")]
         if pos and (pos[0] == "destroy" or (pos[0] == "apply" and "-destroy" in args)):
             return f"{base} {pos[0]}{' -destroy' if pos[0] == 'apply' else ''}"
+        return terraform_secret_read(base, args)
     elif base == "az":
         pos, _ = parse_args(args, {"--subscription", "--vault-name", "-n", "--name", "--id", "-f", "--file", "-o", "--output", "--query"})
         if subsequence(pos, ["keyvault", "secret", "show"]) or subsequence(pos, ["keyvault", "secret", "download"]):
@@ -593,6 +690,18 @@ def detect_argocd(args):
     return (f"argocd {' '.join(pos[:pos.index(hit) + 1])} {app} → server={server}", [app, server], False)
 
 
+def argocd_values_view(args):
+    """`argocd app get -o yaml`, `--show-params`, `app manifests`: Helm values and parameters can hold passwords, so ask."""
+    pos, flags = parse_args(args, {"--server", "--grpc-web-root-path", "-o", "--output", "--revision", "--source"})
+    if pos[:2] == ["app", "manifests"]:
+        return ("argocd app manifests: rendered manifests can include Secrets", [], False)
+    if pos[:2] == ["app", "get"] and ("--show-params" in flags
+                                      or any(v.lower() in ("json", "yaml") for v in output_values(args))):
+        return ("argocd app get -o json/yaml or --show-params: Helm values and parameters in the Application "
+                "can hold passwords", [], False)
+    return None
+
+
 def detect_velero(args, env, cwd):
     pos, flags = parse_args(args, {"--kubecontext", "-n", "--namespace", "--kubeconfig", "--from-backup", "--from-schedule"})
     if len(pos) < 2 or pos[1] not in VELERO_MUTATING:
@@ -687,13 +796,15 @@ def analyse_segment(segment, cwd, depth=0, exported=None):
     reason = forbidden(base, args)
     if reason:
         raise Blocked(reason)
+    if base in ("kubectl", "oc") and "KUBECTL_EXTERNAL_DIFF" in env:
+        raise Blocked("KUBECTL_EXTERNAL_DIFF (runs any program under the `kubectl diff` allow rule)")
 
     if base in ("kubectl", "oc"):
         hit = detect_kubectl(base, args, env, cwd) or kubectl_unknown_objects(base, args)
     elif base == "helm":
         hit = detect_helm(args, env, cwd)
     elif base in ("terraform", "tofu"):
-        hit = detect_terraform(base, args, env, cwd)
+        hit = detect_terraform(base, args, env, cwd) or terraform_state_view(base, args)
     elif base == "az":
         hit = detect_az(args, env)
     elif base == "aws":
@@ -703,7 +814,7 @@ def analyse_segment(segment, cwd, depth=0, exported=None):
     elif base == "ansible-playbook":
         hit = detect_ansible_playbook(args)
     elif base == "argocd":
-        hit = detect_argocd(args)
+        hit = detect_argocd(args) or argocd_values_view(args)
     elif base == "velero":
         hit = detect_velero(args, env, cwd)
     elif base == "git":

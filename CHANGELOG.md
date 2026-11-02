@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **Security fix:** Terraform / OpenTofu commands that print sensitive values in clear text are now denied (checked with terraform 1.14): `state pull`, `output <name>`, `output -json` / `-raw`, `show -json`, `console`, `-show-sensitive`, also through `terragrunt`. The hook also denies reading a `*.tfstate*` file through the shell (`cat`, `jq`, `grep`, `cp`, `python3 -c` …); `ls`, `find -name`, `git log` without `-p` and `echo … >> .gitignore` still work. `terraform show` and `state show` ask with a warning, because a value the provider does not mark sensitive is shown.
+- `terraform state list` (and `tofu`) no longer asks: the `state*` ask rule is split into `state rm|mv|push|replace-provider|show`.
+- **Security fix:** `helm diff --show-secrets` / `--show-secrets-decoded`, `kubectl diff --show-secrets` and `KUBECTL_EXTERNAL_DIFF` (runs any program under the `kubectl diff` allow rule) are denied; `argocd app get -o json|yaml`, `--show-params` and `argocd app manifests` ask with a warning (Helm values can hold passwords). Found by an independent review.
+
 ## 1.3.0 — 2026-11-02
 
 **Upgrade note:** mutating commands on production targets are now **denied by default**. Claude prepares a GitOps PR or gives you the command. To get the old confirm dialog back: `./install.sh --env DEVOPS_KIT_BLOCK_PROD=0`. This is the first release with a signed tag (key fingerprint in guide §9).
