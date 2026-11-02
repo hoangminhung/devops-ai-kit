@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 1.3.0 — 2026-11-02
+
+**Upgrade note:** mutating commands on production targets are now **denied by default**. Claude prepares a GitOps PR or gives you the command. To get the old confirm dialog back: `./install.sh --env DEVOPS_KIT_BLOCK_PROD=0`. This is the first release with a signed tag (key fingerprint in guide §9).
 
 - **Behaviour change:** mutating commands on production targets are now **denied by default** (`DEVOPS_KIT_BLOCK_PROD` was opt-in). Claude prepares a GitOps PR or gives you the command. `--env DEVOPS_KIT_BLOCK_PROD=0` brings back the confirm dialog.
 - New opt-in `DEVOPS_KIT_DEV_PATTERN`: one plain `kubectl` / `helm` / `terraform` / `tofu` call on a matching dev context or workspace runs without a confirm dialog, so the dialogs that remain are worth reading. No allow for any shell feature (`&`, `;`, `|`, `>`, `$`, `#`, a second line), `--server` / `--cluster` / `--user` / `--token` / `--as`, `-auto-approve`, a word that looks like production, other tools, `-ro` contexts or forbidden commands. `./check.sh` shows both settings; `./install.sh` prints a note while the production block is on.
