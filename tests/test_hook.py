@@ -625,6 +625,12 @@ class GitPushTargets(HookTestCase):
         self.assertEqual(self.push("git push --prune origin 'refs/heads/*:refs/heads/*'"), "deny")
         self.assertEqual(self.push("git push --prune origin 'refs/heads/feat/*:refs/heads/feat/*'"), "deny")
 
+    def test_wildcard_checks_the_branches_it_writes(self):
+        for command in ("git push origin 'feat/*:prod/*'", "git push origin 'refs/heads/feat/*:refs/heads/live/*'",
+                        "git push origin '+refs/heads/tracks-*:refs/heads/*'"):  # writes `live`
+            with self.subTest(command=command):
+                self.assertEqual(self.push(command), "deny")
+
     def test_work_branches_are_not_checked_by_name_in_a_mixed_push(self):
         self.assertEqual(self.push("git push origin feat/live-vs-declared main"), "ask")
         self.assertEqual(self.push("git push origin 'refs/heads/feat/*:refs/heads/feat/*'"), "ask")

@@ -940,11 +940,20 @@ def push_destinations(args, cwd):
     if any(a in ("--all", "--mirror", "--branches") for a in args) or any(s.lstrip("+") == ":" for s in pos[1:]):
         return (pos[0] if pos else "origin"), local() or ["?"]
     if any("*" in spec for spec in pos[1:]):
-        # `refs/heads/feat/*:refs/heads/feat/*` pushes the local branches that match the source pattern
-        patterns = [spec.lstrip("+").split(":")[0].replace("refs/heads/", "", 1) for spec in pos[1:] if "*" in spec]
-        matched = [b for b in local() if any(fnmatch.fnmatchcase(b, p) for p in patterns)]
-        rest = [spec.lstrip("+").split(":")[-1].replace("refs/heads/", "", 1) for spec in pos[1:] if "*" not in spec]
-        return pos[0], matched + rest or ["?"]
+        # `feat/*:prod/*` writes prod/<what * matched> for each local branch that matches feat/*
+        dests, branches = [], local()
+        for spec in pos[1:]:
+            src, _, dst = spec.lstrip("+").partition(":")
+            src, dst = (part.replace("refs/heads/", "", 1) for part in (src, dst or src))
+            if "*" not in spec:
+                dests.append(dst)
+                continue
+            source = re.compile(re.escape(src).replace(r"\*", "(.*)"))
+            for branch in branches:
+                match = source.fullmatch(branch)
+                if match:
+                    dests.append(dst.replace("*", match.group(1), 1))
+        return pos[0], dests or ["?"]
     if len(pos) > 1:
         dests = []
         for spec in pos[1:]:
@@ -993,7 +1002,7 @@ def detect_git_push(args, cwd):
     if deletes and re.fullmatch(r"[\w.-]+", remote):
         # branches the remote had at the last fetch (no network): the ones --mirror / --prune may delete
         tracked = run(["git", "for-each-ref", "--format=%(refname:short)", f"refs/remotes/{remote}"], cwd=cwd).split()
-        checked += [t.split("/", 1)[-1] for t in tracked]
+        checked += [b for b in (t.split("/", 1)[-1] for t in tracked) if not work_branch(b)]
     return (f"git push{force} → repo={repo} remote={remote} branch={','.join(branches)} "
             "(if this repo is watched by Argo CD/Flux, this deploys)", checked, False)
 
