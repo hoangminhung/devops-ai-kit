@@ -410,6 +410,17 @@ class SecretReadBypasses(HookTestCase):
         "unzip -p tfplan",
         "tar -xOf tfplan",
         "python3 -m zipfile -e tfplan out/",
+        # third review round
+        "python3 -c \"import json; print(open('envs/prod/terraform.tfstate.backup').read())\"",
+        "python3 -c \"import zipfile;print(zipfile.ZipFile('tfplan').read('tfstate'))\"",
+        "node -e \"const fs=require('fs'); console.log(fs.readFileSync('terraform.tfstate','utf8'))\"",
+        "flock /tmp/l -c 'terraform output -json'",
+        "flock -n /tmp/l -c 'kubectl delete ns foo'",
+        "strace -fo /dev/null terraform output -json",
+        "aws-vault exec prof terraform output -json",
+        "doppler run --command 'terraform output -json'",
+        "sops -d secrets.enc.yaml",
+        "sops decrypt secrets.enc.yaml",
     ]
     ASK = [
         "echo 'terraform output -json' | bash",
@@ -453,6 +464,9 @@ class SecretReadBypasses(HookTestCase):
         "echo '*.tfstate' >> .gitignore && git commit -am \"$MSG\"",
         "grep -rn --exclude='*.tfstate*' password docs/",
         "kubectl get pods -A -o name | xargs -n1 kubectl describe",
+        "grep -rn backend --include='*.tf' .",
+        "unzip -l tfplan",
+        "python3 -c 'print(1); print(2)'",
     ]
 
     @classmethod
@@ -484,6 +498,16 @@ class SecretReadBypasses(HookTestCase):
         for command in self.NOT_DENIED:
             with self.subTest(command=command):
                 self.assertNotEqual(self.decision(command)[0], "deny")
+
+    def test_rg_skips_state_that_git_ignores(self):
+        repo = self.workdir / "gitrepo"
+        (repo / "envs").mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        (repo / ".gitignore").write_text("*.tfstate*\n")
+        (repo / "envs" / "terraform.tfstate").touch()
+        self.assertNotEqual(self.decision("rg password gitrepo/")[0], "deny")
+        self.assertEqual(self.decision("rg --no-ignore password gitrepo/")[0], "deny")
+        self.assertEqual(self.decision("grep -rn password gitrepo/")[0], "deny")
 
     def test_recursive_search_skips_backend_config(self):
         (self.workdir / "modules/db/.terraform").mkdir(parents=True, exist_ok=True)

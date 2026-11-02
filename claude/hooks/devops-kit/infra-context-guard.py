@@ -115,7 +115,7 @@ TF_FALSE = {"0", "f", "false"}  # Go bool flags: -json=false is off
 TFSTATE_NAME = re.compile(r"[^\\/]*\.tfstate(?:\.[^/]*)?")
 TFSTATE_SAMPLES = ("terraform.tfstate", "terraform.tfstate.backup", "errored.tfstate")
 # Commands that may name a state file without printing it.
-STATE_FILE_SAFE = {"ls", "stat", "file", "du", "wc", "test", "[", "touch", "mkdir", "rm", "echo", "printf", "tree",
+STATE_FILE_SAFE = {"ls", "stat", "file", "du", "wc", "test", "[", "touch", "mkdir", "rm", "echo", "printf", "tree", "zipinfo",
                    "sha256sum", "sha1sum", "md5sum", "cd", "terraform", "tofu", "terragrunt"}
 GIT_VALUE_FLAGS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"}
 GIT_PRINTS_FILES = {"show", "diff", "cat-file", "blame", "grep", "archive", "format-patch", "log", "whatchanged"}
@@ -573,7 +573,7 @@ def git_subcommand(args):
 
 def grep_parts(base, args):
     """(paths, exclude globs, recursive) of a grep-like command; the search pattern is not a path."""
-    paths, excludes, recursive, pattern_given = [], [], base in ALWAYS_RECURSIVE, False
+    paths, excludes, includes, recursive, pattern_given = [], [], [], base in ALWAYS_RECURSIVE, False
     value_flags = {"-e", "--regexp", "-f", "--file", "-m", "--max-count", "-A", "-B", "-C", "-g", "--glob",
                    "--iglob", "--exclude", "--exclude-dir", "--include", "--ignore", "--ignore-dir", "-t", "-T",
                    "--type", "--type-not", "-d", "--directories", "--color", "--colour", "-M", "-j", "--threads"}
@@ -590,8 +590,10 @@ def grep_parts(base, args):
                 i += 1
             if key in ("--exclude", "--exclude-dir", "--ignore", "--ignore-dir"):
                 excludes.append(value)
-            elif key in ("--glob", "--iglob") and value.startswith("!"):
-                excludes.append(value[1:])
+            elif key in ("--glob", "--iglob"):
+                (excludes if value.startswith("!") else includes).append(value.lstrip("!"))
+            elif key == "--include":
+                includes.append(value)
             elif key in ("--regexp", "--file"):
                 pattern_given = True
             elif key in ("--recursive", "--dereference-recursive") or (key == "--directories" and value == "recurse"):
@@ -601,8 +603,8 @@ def grep_parts(base, args):
             if letters[0] in "efmABCgtTdMj" and len(letters) == 1 and i + 1 < len(args):
                 value = args[i + 1]
                 i += 1
-                if letters == "g" and value.startswith("!"):
-                    excludes.append(value[1:])
+                if letters == "g":
+                    (excludes if value.startswith("!") else includes).append(value.lstrip("!"))
                 elif letters in "ef":
                     pattern_given = True
                 elif letters == "d" and value == "recurse":
@@ -614,26 +616,42 @@ def grep_parts(base, args):
         i += 1
     if not pattern_given and paths:
         paths = paths[1:]  # the first word is the pattern
-    return paths, excludes, recursive
+    return paths, excludes, includes, recursive
 
 
-def state_files_under(paths, excludes, cwd, follow=False):
-    """True when a recursive read of `paths` would reach a state file that is not excluded."""
+def state_files_under(paths, excludes, cwd, follow=False, includes=(), gitignore=False):
+    """True when a recursive read of `paths` would reach a state file that is not excluded.
+
+    `includes`: only matching files are read (`grep --include='*.tf'`). `gitignore`: rg / ag skip
+    files that git ignores."""
     def excluded(name):
         return any(fnmatch.fnmatchcase(name, pattern) for pattern in excludes)
+
+    def read(folder, name):
+        if excluded(name) or not TFSTATE_NAME.fullmatch(name):
+            return False
+        if includes and not any(fnmatch.fnmatchcase(name, pattern) for pattern in includes):
+            return False
+        if gitignore and subprocess.run(["git", "-C", folder, "check-ignore", "-q", name],
+                                        capture_output=True, timeout=3).returncode == 0:
+            return False
+        return True
 
     seen = 0
     for path in paths or ["."]:
         root = path if os.path.isabs(path) else os.path.join(cwd, path)
         if os.path.isfile(root):
             if TFSTATE_NAME.fullmatch(os.path.basename(root)) and not excluded(os.path.basename(root)):
-                return True
+                return True  # named on purpose: includes and .gitignore do not apply
             continue
         for folder, dirs, files in os.walk(root, followlinks=follow):
             dirs[:] = [d for d in dirs if d not in SKIP_DIRS and not excluded(d)]
             for name in files:
-                if TFSTATE_NAME.fullmatch(name) and not excluded(name):
-                    return True
+                try:
+                    if read(folder, name):
+                        return True
+                except (OSError, subprocess.SubprocessError):
+                    return True  # cannot tell: treat it as read
             seen += len(files) + len(dirs)
             if seen > WALK_LIMIT:
                 return False  # a very large tree: not checked (guide §8)
@@ -648,8 +666,8 @@ def state_file_read(base, args, cwd):
         sub = git_subcommand(args)  # `git commit -m "move tfstate"` prints nothing
         if sub not in GIT_PRINTS_FILES or (sub == "log" and not any(t.startswith(GIT_PATCH_FLAGS) for t in args)):
             return None
-    if base == "find":
-        return None  # names only; its -exec commands are checked in analyse_segment
+    if base == "find" or (base == "unzip" and {"-l", "-Z", "-v"} & set(args) and not {"-p", "-c"} & set(args)):
+        return None  # names only (find -exec commands are checked in analyse_segment)
     words = args
     if base in DIR_READERS:
         excludes = [t.split("=", 1)[1] for t in args if t.startswith("--exclude=")]
@@ -657,10 +675,12 @@ def state_file_read(base, args, cwd):
         if dirs and state_files_under(dirs, excludes, cwd):
             return f"{base} on a folder that holds a Terraform state file (it is copied in clear text)"
     if base in GREP_TOOLS:
-        paths, excludes, recursive = grep_parts(base, args)
+        paths, excludes, includes, recursive = grep_parts(base, args)
         follow = any(t in ("-R", "-L", "--follow", "--dereference-recursive") or
                      (t.startswith("-") and not t.startswith("--") and "R" in t) for t in args)
-        if recursive and state_files_under(paths, excludes, cwd, follow):
+        gitignore = base in ("rg", "ag") and not any(t in ("-u", "-uu", "-uuu", "--no-ignore", "--no-ignore-vcs",
+                                                             "--unrestricted", "--skip-vcs-ignores") for t in args)
+        if recursive and state_files_under(paths, excludes, cwd, follow, includes, gitignore):
             return (f"{base} searches a folder that holds a Terraform state file "
                     "(add --exclude='*.tfstate*', or rg -g '!*.tfstate*')")
         words = paths
@@ -708,6 +728,10 @@ def forbidden(base, args):
             return "helm diff --show-secrets (prints Secret values; without the flag helm-diff hides them)"
     elif base == "terragrunt":
         return terraform_secret_read(base, args)
+    elif base == "sops":
+        pos = [t for t in args if not t.startswith("-")]
+        if {"-d", "--decrypt"} & set(args) or pos[:1] == ["decrypt"]:
+            return "sops decrypt (prints secret values)"
     elif base in ("terraform", "tofu"):
         pos = [t for t in args if not t.startswith("-")]
         if pos and (pos[0] == "destroy" or (pos[0] == "apply" and "-destroy" in args)):
@@ -996,11 +1020,19 @@ def nested_command(base, args):
         return shlex.join(args[i:] + ["XARGS_INPUT"]) if i < len(args) else ""
     if base in RUN_AFTER_DASHDASH and "--" in args:
         return shlex.join(args[args.index("--") + 1:])
+    command_flag = next((args[i + 1] for i, t in enumerate(args[:-1]) if t in ("--command", "-c")), None)
+    if (base in RUN_AFTER_DASHDASH or base == "flock") and command_flag is not None:
+        return command_flag  # `doppler run --command '…'`, `flock /tmp/l -c '…'`
+    if base == "aws-vault" and args[:1] == ["exec"]:
+        i = 1
+        while i < len(args) and args[i].startswith("-"):
+            i += 1 if "=" in args[i] or args[i] in ("--no-session", "-j", "--json", "-n") else 2
+        return shlex.join(args[i + 1:])  # `aws-vault exec PROFILE terraform …`
     if base in RUN_AFTER_WORDS:
         rest = args[1:] if base == "direnv" and args[:1] == ["exec"] else args
         i = 0
         while i < len(rest) and rest[i].startswith("-"):
-            i += 2 if rest[i] in ("-o", "-e", "-p", "-s", "-w") else 1
+            i += 2 if "-" + rest[i][-1] in ("-o", "-e", "-p", "-s", "-w") else 1  # `strace -fo log`
         return shlex.join(rest[i + RUN_AFTER_WORDS[base]:])
     return None
 
@@ -1240,6 +1272,7 @@ def analyse_command(command, cwd, depth=0):
         unquoted = re.sub(r"'[^']*'", "''", command)  # `git commit -m 'do not run $(x)'` runs nothing
         for inner in re.findall(r"\$\(([^()]*)\)|<\(([^()]*)\)|`([^`]*)`", unquoted):
             hits.extend(analyse_command(next(part for part in inner if part), cwd, depth + 1))
+        inline_code_reads_state(command, cwd)
     segments = [seg.strip() for seg in SEGMENT_SPLIT.split(command) if seg.strip()]
     for segment in segments:
         # `export KUBECONFIG=...; kubectl ...` must use the exported file for the later segments.
@@ -1250,6 +1283,20 @@ def analyse_command(command, cwd, depth=0):
             cwd = os.path.join(cwd, os.path.expanduser(tokens[1]))  # `cd envs/prod && cat *`
     passed_on(segments, cwd)
     return hits
+
+
+INTERPRETERS = {"python", "python3", "python2", "node", "perl", "ruby", "php", "deno", "bun"}
+CODE_FLAGS = {"-c", "-e", "-E", "-r", "-p", "--eval", "--print"}
+
+
+def inline_code_reads_state(command, cwd):
+    """`python3 -c "import json; print(open('terraform.tfstate').read())"`: the segment split cuts the code
+    at `;`, so the whole code string is checked here."""
+    tokens = tokenize(command)
+    for i, tok in enumerate(tokens[:-2]):
+        if re.split(r"[\\/]", tok)[-1] in INTERPRETERS and tokens[i + 1] in CODE_FLAGS:
+            if names_state_file(tokens[i + 2], cwd):
+                raise Blocked(f"{tok} {tokens[i + 1]} code that opens a Terraform state or plan file")
 
 
 def find_reaches_state(find_args, cwd):
