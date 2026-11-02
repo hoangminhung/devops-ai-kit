@@ -6,9 +6,10 @@ Argo CD `ignoreDifferences`, an HPA that owns `replicas`, Argo CD apps without
 selfHeal: in all these cases the live value can differ from the code and the tool
 does not report it. Before you trust the code, read these fields live.
 
-The script reads only `*.tf`, `*.yaml`, `*.yml` and `*.tpl` files (never state,
-.env or keys) and prints values only: file and line, resource kinds, names and
-field paths. It never prints free text from the files.
+The script reads only regular `*.tf`, `*.yaml`, `*.yml` and `*.tpl` files (never
+state, .env or keys, never symlinks or devices) and prints values only: file and
+line, resource kinds, names and field paths, each checked against a strict pattern.
+It never prints free text from the files. Comments are ignored.
 
 Usage:
   find_ignore_rules.py [REPO_DIR] [--json]
@@ -18,20 +19,33 @@ import argparse
 import json
 import os
 import re
+import stat
 import sys
 
 SKIP_DIRS = {".git", ".terraform", "node_modules", "vendor", ".venv", "__pycache__"}
-SAFE_VALUE = re.compile(r"[A-Za-z0-9_./\[\]\"*=:~{}$-]{1,120}")
 MAX_FILE_BYTES = 2_000_000
+MAX_LINE = 2000  # longer lines are not YAML or HCL anyone writes by hand
 
-TF_BLOCK = re.compile(r'^\s*(resource|data|module)\s+"([^"]+)"(?:\s+"([^"]+)")?')
-TF_IGNORE = re.compile(r"\bignore_changes\s*=\s*(.*)")
-YAML_KEY = re.compile(r"^(\s*)(-\s+)?([A-Za-z0-9_.\-/]+):\s*(.*?)\s*$")
+# Strict patterns: a value that does not match is shown as <not shown>.
+K8S_NAME = re.compile(r"[a-z0-9](?:[-a-z0-9.]{0,61}[a-z0-9])?")
+KIND = re.compile(r"[A-Z][A-Za-z0-9]{0,62}")
+GROUP = re.compile(r"[a-z0-9](?:[-a-z0-9.]{0,99})?")
+POINTER = re.compile(r"/[A-Za-z0-9_.~/-]{0,120}")
+MANAGER = re.compile(r"[a-z0-9](?:[-a-z0-9.:_]{0,61}[a-z0-9])?")
+TF_TYPE = re.compile(r"[a-z][a-z0-9_]{0,63}")
+TF_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_-]{0,63}")
+TF_ATTR = re.compile(r'[a-z_][a-z0-9_]{0,63}(?:\[(?:\d{1,4}|"[A-Za-z0-9_./-]{1,40}")\]|\.[a-z_][a-z0-9_]{0,63}){0,8}')
+CM_KEY = re.compile(r"[A-Za-z0-9.-]{0,100}_[A-Za-z][A-Za-z0-9]{0,62}|all")
+
+TF_BLOCK = re.compile(r'^\s*(resource|data|module)\s+"([^"]{1,100})"(?:\s+"([^"]{1,100})")?')
+TF_IGNORE = re.compile(r"\bignore_changes\s*=")
+KEY_LINE = re.compile(r"([A-Za-z0-9_.\-/]{1,253}):(?:\s+(.*))?$")
 HELM_LOOKUP = re.compile(r"\blookup\s+\"")
+FLOW_FIELD = re.compile(r"\b(name|kind|selfHeal|prune):\s*([^,}\s]{1,100})")
 
 # What each finding means, in the kit's own words (never text from the repo).
 MEANING = {
-    "ignore_changes": "Terraform does not plan changes to these attributes; read them live (plan -refresh-only)",
+    "ignore_changes": "Terraform never plans these attributes; compare the .tf value with the live value",
     "ignoreDifferences": "Argo CD does not report these fields as OutOfSync; read them live",
     "RespectIgnoreDifferences": "Argo CD also keeps the live value of ignored fields when it syncs",
     "argocd-cm ignoreDifferences": "Argo CD ignores these fields for every app of this kind",
@@ -50,126 +64,236 @@ MEANING = {
 }
 
 
-def safe(value):
-    """Keep a value only when it looks like a name or a path; drop everything else."""
-    value = value.strip().strip("'\"")
-    return value if SAFE_VALUE.fullmatch(value) else "<not shown>"
+def safe(value, pattern):
+    value = (value or "").strip().strip("'\"")
+    if "{{" in value:
+        return "<templated>"
+    return value if pattern.fullmatch(value) else "<not shown>"
 
 
 def finding(path, line, tool, rule, detail):
     return {"file": path, "line": line, "tool": tool, "rule": rule, "meaning": MEANING[rule], "detail": detail}
 
 
-def scan_terraform(rel, lines):
+# --- Terraform -------------------------------------------------------------
+
+def hcl_code(text):
+    """The lines with comments (`#`, `//`, `/* */`) replaced by spaces; line numbers stay the same."""
+    out, i, quote = [], 0, False
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            out.append(ch)
+            if ch == "\\" and i + 1 < len(text):
+                out.append(text[i + 1])
+                i += 1
+            elif ch in ('"', "\n"):
+                quote = False
+        elif ch == '"':
+            quote = True
+            out.append(ch)
+        elif ch == "#" or text.startswith("//", i):
+            end = text.find("\n", i)
+            end = len(text) if end < 0 else end
+            out.append(" " * (end - i))
+            i = end
+            continue
+        elif text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            end = len(text) if end < 0 else end + 2
+            out.append(re.sub(r"[^\n]", " ", text[i:end]))
+            i = end
+            continue
+        else:
+            out.append(ch)
+        i += 1
+    return "".join(out).split("\n")
+
+
+def scan_terraform(rel, text):
     found, block = [], "?"
+    lines = hcl_code(text)
     i = 0
     while i < len(lines):
         match = TF_BLOCK.match(lines[i])
         if match:
-            block = ".".join(p for p in match.groups()[1:] if p)
-            if match.group(1) != "resource":
-                block = f"{match.group(1)}.{block}"
+            kind, first, second = match.groups()
+            if kind == "module":
+                block = "module." + safe(first, TF_NAME)
+            else:
+                block = ("data." if kind == "data" else "") + safe(first, TF_TYPE) + "." + safe(second, TF_NAME)
         ignore = TF_IGNORE.search(lines[i])
         if ignore:
-            start, text = i, ignore.group(1)
-            while text.count("[") > text.count("]") and i + 1 < len(lines):
+            start, value = i, lines[i][ignore.end():]
+            while value.count("[") > value.count("]") and i + 1 < len(lines) and i - start < 200:
                 i += 1
-                text += " " + lines[i]
-            text = text.split("#")[0].strip()
-            if text.startswith("all"):
+                value += " " + lines[i]
+            value = value.strip()
+            if value.startswith("all"):
                 attrs = ["all"]
             else:
-                attrs = [safe(a) for a in re.split(r"[,\s]+", text.strip("[] ")) if a.strip()]
-            found.append(finding(rel, start + 1, "terraform", "ignore_changes", f"{safe(block)}: {', '.join(attrs)}"))
+                inner = value[value.find("[") + 1:value.rfind("]")] if "[" in value else value
+                attrs = [safe(a, TF_ATTR) for a in re.split(r"[,\s]+", inner) if a.strip()]
+            found.append(finding(rel, start + 1, "terraform", "ignore_changes", f"{block}: {', '.join(attrs) or '<empty>'}"))
         i += 1
     return found
 
 
-def block_lines(lines, start, indent):
-    """Lines under the key at `start` (more indented than `indent`)."""
-    out = []
-    for j in range(start + 1, len(lines)):
-        text = lines[j]
-        if not text.strip() or text.lstrip().startswith("#"):
+# --- YAML ------------------------------------------------------------------
+
+def yaml_code(line):
+    """A YAML line without its comment (a `#` at the start or after a space, outside quotes)."""
+    quote = None
+    for i, ch in enumerate(line):
+        if quote:
+            if ch == quote:
+                quote = None
+        elif ch in "'\"":
+            quote = ch
+        elif ch == "#" and (i == 0 or line[i - 1] in " \t"):
+            return line[:i].rstrip()
+    return line.rstrip()
+
+
+def yaml_nodes(lines, offset):
+    """One node per key or list item: {line, path, value, item}. Indent-based, no regex on the whole text."""
+    nodes, stack = [], []  # stack of (indent, key)
+    for n, raw in enumerate(lines):
+        text = yaml_code(raw[:MAX_LINE].replace("\t", "  "))
+        body = text.strip()
+        if not body or body.startswith(("---", "%")):
             continue
-        depth = len(text) - len(text.lstrip())
-        # a list may sit at the key's own indent: `ignoreDifferences:` / `- kind: Deployment`
-        if depth < indent or (depth == indent and not text.lstrip().startswith("- ")):
-            break
-        out.append((j, text))
-    return out
+        indent = len(text) - len(text.lstrip())
+        item = body == "-" or body.startswith("- ")
+        if item:
+            body = body[1:].strip()
+        # a list may sit at its key's own indent: `ignoreDifferences:` / `- kind: Deployment`
+        while stack and (stack[-1][0] > indent or (stack[-1][0] == indent and (not item or stack[-1][1] == "[]"))):
+            stack.pop()
+        match = KEY_LINE.match(body)
+        where = offset + n + 1
+        if item:
+            stack.append((indent, "[]"))  # the keys of this item sit under it
+            nodes.append({"line": where, "path": tuple(k for _, k in stack), "value": "" if match else body, "item": True})
+        if match:
+            stack.append((indent + 2 if item else indent, match.group(1)))
+            nodes.append({"line": where, "path": tuple(k for _, k in stack), "value": (match.group(2) or "").strip(), "item": False})
+    return nodes
+
+
+def value_at(nodes, path):
+    return next((nd["value"] for nd in nodes if nd["path"] == path and not nd["item"]), None)
+
+
+def flow_field(value, field):
+    """`{ prune: true, selfHeal: true }` → the value of one field."""
+    match = next((m for m in FLOW_FIELD.finditer(value or "") if m.group(1) == field), None)
+    return match.group(2) if match else None
+
+
+def ignore_entries(nodes, base):
+    """The entries of an ignoreDifferences list at path `base`."""
+    entries, current = [], None
+    for nd in nodes:
+        rest = nd["path"][len(base):]
+        if nd["path"][:len(base)] != base or not rest:
+            continue
+        if rest == ("[]",):
+            current = {}
+            entries.append(current)
+        if current is None or len(rest) < 2:
+            continue
+        field, value = rest[1], nd["value"]
+        if field in ("kind", "name", "group", "namespace") and len(rest) == 2 and value:
+            current[field] = safe(value, {"kind": KIND, "group": GROUP}.get(field, K8S_NAME))
+        elif rest[-1] == "[]" and value and field == "jsonPointers":
+            current.setdefault("paths", []).append(safe(value, POINTER))
+        elif rest[-1] == "[]" and value and field == "jqPathExpressions":
+            current.setdefault("paths", []).append("<jq expression>")
+        elif rest[-1] == "[]" and value and field == "managedFieldsManagers":
+            current.setdefault("managers", []).append(safe(value, MANAGER))
+    return entries
+
+
+def scan_argocd_app(rel, nodes, kind, name, first):
+    found = []
+    spec = ("spec",) if kind == "Application" else ("spec", "template", "spec")
+    for nd in nodes:
+        if nd["path"] == spec + ("ignoreDifferences",) and not nd["item"]:
+            for entry in ignore_entries(nodes, nd["path"]) or [{}]:
+                parts = [f"{k}={v}" for k, v in entry.items() if isinstance(v, str)]
+                parts += [f"{k}={','.join(v)}" for k, v in entry.items() if isinstance(v, list)]
+                found.append(finding(rel, nd["line"], "argocd", "ignoreDifferences",
+                                     f"app {name}: " + (" ".join(parts) or "<see file>")))
+    policy_path = spec + ("syncPolicy",)
+    policy = [nd for nd in nodes if nd["path"][:len(policy_path)] == policy_path]
+    if any("{{" in nd["value"] for nd in policy):
+        return found  # templated: check the rendered app instead
+    automated = next((nd for nd in policy if nd["path"] == policy_path + ("automated",) and not nd["item"]), None)
+    if automated is None:
+        return found + [finding(rel, first, "argocd", "no automated sync", f"app {name}")]
+    for field, rule in (("selfHeal", "selfHeal off"), ("prune", "prune off")):
+        nested = value_at(policy, policy_path + ("automated", field))
+        value = nested if nested is not None else flow_field(automated["value"], field)
+        if (value or "").lower() != "true":
+            found.append(finding(rel, automated["line"], "argocd", rule, f"app {name}"))
+    return found
 
 
 def scan_yaml_doc(rel, lines, offset):
+    nodes = yaml_nodes(lines, offset)
+    if not nodes:
+        return []
     found = []
-    text = "\n".join(lines)
-    kind = re.search(r"^kind:\s*([A-Za-z]+)", text, re.MULTILINE)
-    kind = kind.group(1) if kind else ""
-    name = re.search(r"^metadata:\s*\n(?:\s+.*\n)*?\s+name:\s*(\S+)", text + "\n", re.MULTILINE)
-    name = safe(name.group(1)) if name else "?"
+    raw_kind = value_at(nodes, ("kind",))
+    kind = safe(raw_kind, KIND) if raw_kind else ""
+    name = value_at(nodes, ("metadata", "name")) or flow_field(value_at(nodes, ("metadata",)), "name")
+    name = safe(name, K8S_NAME) if name else "?"
+    first = nodes[0]["line"]
+    label = f"{kind or '?'} {name}"
 
-    for n, line in enumerate(lines):
-        where = offset + n + 1
-        # options written as list items (`- RespectIgnoreDifferences=true`) or annotation values
-        if "RespectIgnoreDifferences=true" in line:
-            found.append(finding(rel, where, "argocd", "RespectIgnoreDifferences", f"app {name}"))
-        if "ServerSideApply=true" in line:
-            found.append(finding(rel, where, "argocd", "ServerSideApply", f"{kind or '?'} {name}"))
-        if "IgnoreExtraneous" in line and "compare-options" in line:
-            found.append(finding(rel, where, "argocd", "IgnoreExtraneous", f"{kind or '?'} {name}"))
-        if "Prune=false" in line and "sync-options" in line:
-            found.append(finding(rel, where, "argocd", "prune off", f"{kind or '?'} {name}"))
-        match = YAML_KEY.match(line)
-        if not match:
-            continue
-        indent, key, value = len(match.group(1)) + len(match.group(2) or ""), match.group(3), match.group(4)
-        if key == "ignoreDifferences" and kind in ("Application", "ApplicationSet"):
-            entries, current = [], {}
-            for _, sub in block_lines(lines, n, indent):
-                item = YAML_KEY.match(sub)
-                if item and item.group(2) and current:
-                    entries.append(current)
-                    current = {}
-                if item and item.group(3) in ("kind", "name", "group", "namespace"):
-                    current[item.group(3)] = safe(item.group(4))
-                elif re.match(r"^\s*-\s+[\"']?[/.]", sub):
-                    current.setdefault("paths", []).append(safe(sub.strip()[1:]))
-                elif re.match(r"^\s*-\s+\S+$", sub) and "managers" in current:
-                    current["managers"].append(safe(sub.strip()[1:]))
-                elif item and item.group(3) == "managedFieldsManagers":
-                    current["managers"] = []
-            if current:
-                entries.append(current)
-            for entry in entries or [{}]:
-                parts = [f"{k}={v}" for k, v in entry.items() if isinstance(v, str)]
-                parts += [f"{k}={','.join(v)}" for k, v in entry.items() if isinstance(v, list) and v]
-                found.append(finding(rel, where, "argocd", "ignoreDifferences", f"app {name}: " + " ".join(parts)))
-        elif key.startswith("resource.customizations.ignoreDifferences"):
-            found.append(finding(rel, where, "argocd", "argocd-cm ignoreDifferences", safe(key.split(".", 3)[-1])))
-        elif key in ("resource.exclusions", "resource.customizations.ignoreResourceUpdates.all"):
-            found.append(finding(rel, where, "argocd", "argocd-cm exclusions", safe(key)))
-        elif key == "helm.sh/resource-policy" and "keep" in value:
-            found.append(finding(rel, where, "helm", "resource-policy keep", f"{kind or '?'} {name}"))
+    for nd in nodes:
+        value, path = nd["value"], nd["path"]
+        if path[-2:] == ("syncOptions", "[]"):
+            if value == "RespectIgnoreDifferences=true":
+                found.append(finding(rel, nd["line"], "argocd", "RespectIgnoreDifferences", label))
+            elif value == "ServerSideApply=true":
+                found.append(finding(rel, nd["line"], "argocd", "ServerSideApply", label))
+        if path[:2] == ("metadata", "annotations") and len(path) == 3:
+            key = path[2]
+            if key == "argocd.argoproj.io/compare-options" and "IgnoreExtraneous" in value:
+                found.append(finding(rel, nd["line"], "argocd", "IgnoreExtraneous", label))
+            if key == "argocd.argoproj.io/sync-options" and "Prune=false" in value:
+                found.append(finding(rel, nd["line"], "argocd", "prune off", label))
+            if key == "argocd.argoproj.io/sync-options" and "ServerSideApply=true" in value:
+                found.append(finding(rel, nd["line"], "argocd", "ServerSideApply", label))
+            if key == "helm.sh/resource-policy" and "keep" in value:
+                found.append(finding(rel, nd["line"], "helm", "resource-policy keep", label))
 
-    if kind == "Application":  # block or flow style: `automated: { prune: true, selfHeal: true }`
-        if not re.search(r"\bautomated:", text):
-            found.append(finding(rel, offset + 1, "argocd", "no automated sync", f"app {name}"))
-        else:
-            if not re.search(r"\bselfHeal:\s*true", text):
-                found.append(finding(rel, offset + 1, "argocd", "selfHeal off", f"app {name}"))
-            if not re.search(r"\bprune:\s*true", text):
-                found.append(finding(rel, offset + 1, "argocd", "prune off", f"app {name}"))
+    if kind in ("Application", "ApplicationSet"):
+        found += scan_argocd_app(rel, nodes, kind, name, first)
+
+    if kind == "ConfigMap" and name in ("argocd-cm", "<templated>"):
+        for nd in nodes:
+            if nd["path"][:1] == ("data",) and len(nd["path"]) == 2:
+                key = nd["path"][1]
+                if key.startswith("resource.customizations.ignoreDifferences."):
+                    found.append(finding(rel, nd["line"], "argocd", "argocd-cm ignoreDifferences",
+                                         safe(key.split(".", 3)[-1], CM_KEY)))
+                elif key in ("resource.exclusions", "resource.customizations.ignoreResourceUpdates.all"):
+                    found.append(finding(rel, nd["line"], "argocd", "argocd-cm exclusions", key))
+
     if kind in ("HorizontalPodAutoscaler", "ScaledObject", "VerticalPodAutoscaler"):
-        target = re.search(r"(?:scaleTargetRef|targetRef):\s*\n((?:\s+.*\n?)+?)(?=^\S|\Z)", text + "\n", re.MULTILINE)
-        tkind = re.search(r"kind:\s*(\S+)", target.group(1)) if target else None
-        tname = re.search(r"name:\s*(\S+)", target.group(1)) if target else None
-        detail = f"{name} → {safe(tkind.group(1)) if tkind else '?'}/{safe(tname.group(1)) if tname else '?'}"
-        mode = re.search(r"updateMode:\s*\"?(\w+)", text)
+        ref = ("spec", "targetRef") if kind == "VerticalPodAutoscaler" else ("spec", "scaleTargetRef")
+        tkind = value_at(nodes, ref + ("kind",)) or flow_field(value_at(nodes, ref), "kind") or "Deployment"
+        tname = value_at(nodes, ref + ("name",)) or flow_field(value_at(nodes, ref), "name")
+        detail = f"{name} → {safe(tkind, KIND)}/{safe(tname, K8S_NAME) if tname else '?'}"
         if kind == "VerticalPodAutoscaler":
-            if mode and mode.group(1) == "Off":
+            mode = (value_at(nodes, ("spec", "updatePolicy", "updateMode")) or "Auto").strip("'\"")
+            if mode == "Off":
                 return found  # recommendations only
-            detail += f" (updateMode {safe(mode.group(1)) if mode else 'Auto'})"
-        found.append(finding(rel, offset + 1, "kubernetes", kind, detail))
+            detail += f" (updateMode {safe(mode, KIND)})"
+        found.append(finding(rel, first, "kubernetes", kind, detail))
     return found
 
 
@@ -181,38 +305,59 @@ def scan_yaml(rel, lines, in_templates):
             start = n + 1
     if in_templates:
         for n, line in enumerate(lines):
-            if HELM_LOOKUP.search(line):
+            if HELM_LOOKUP.search(line[:MAX_LINE]):
                 found.append(finding(rel, n + 1, "helm", "helm lookup", "template"))
-    if os.path.basename(rel) in ("kustomization.yaml", "kustomization.yml", "Kustomization"):
-        for n, line in enumerate(lines):
-            match = YAML_KEY.match(line)
-            if match and not match.group(1) and match.group(3) in (
+    if os.path.basename(rel) in ("kustomization.yaml", "kustomization.yml"):
+        for nd in yaml_nodes(lines, 0):
+            if len(nd["path"]) == 1 and nd["path"][0] in (
                     "patches", "patchesStrategicMerge", "patchesJson6902", "replicas", "images", "components"):
-                found.append(finding(rel, n + 1, "kustomize", "kustomize overlay", match.group(3)))
+                found.append(finding(rel, nd["line"], "kustomize", "kustomize overlay", nd["path"][0]))
     return found
+
+
+# --- walk ------------------------------------------------------------------
+
+def regular_file(path):
+    """Only plain files: no symlinks (they can point outside the repo), FIFOs or devices."""
+    try:
+        info = os.lstat(path)
+    except OSError:
+        return False
+    return stat.S_ISREG(info.st_mode) and info.st_size <= MAX_FILE_BYTES
+
+
+def is_worktree(folder):
+    """A git worktree inside the repo (`.git` file → `…/worktrees/<name>`): a copy, so its findings repeat."""
+    marker = os.path.join(folder, ".git")
+    if not regular_file(marker):
+        return False
+    try:
+        with open(marker, encoding="utf-8", errors="replace") as fh:
+            return "/worktrees/" in fh.read(500)
+    except OSError:
+        return False
 
 
 def scan(repo):
     results = []
     for folder, dirs, files in os.walk(repo):
-        dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS)
+        dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS and not is_worktree(os.path.join(folder, d)))
         for name in sorted(files):
             if not name.endswith((".tf", ".yaml", ".yml", ".tpl")):
                 continue
             path = os.path.join(folder, name)
+            if not regular_file(path):
+                continue
             rel = os.path.relpath(path, repo)
             try:
-                if os.path.getsize(path) > MAX_FILE_BYTES:
-                    continue
                 with open(path, encoding="utf-8", errors="replace") as fh:
-                    lines = fh.read().splitlines()
+                    text = fh.read()
             except OSError:
                 continue
             if name.endswith(".tf"):
-                results += scan_terraform(rel, lines)
+                results += scan_terraform(rel, text)
             else:
-                in_templates = "templates" in rel.split(os.sep)
-                results += scan_yaml(rel, lines, in_templates)
+                results += scan_yaml(rel, text.splitlines(), "templates" in rel.split(os.sep))
     return results
 
 

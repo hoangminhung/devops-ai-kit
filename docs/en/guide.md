@@ -322,9 +322,11 @@ The most important part of `CLAUDE.md` is the **Environment registry** table: wh
 
 Which source wins is your team's decision: Claude marks it ⚠️ and asks. Before a change, the `infra-recon` agent compares code and live state for the parts you touch and writes a **Drift** section (field | declared | live | hidden by) with read-only tools:
 
-- Terraform: `terraform plan -refresh-only -lock=false` (also shows changes on `ignore_changes` attributes; no `-out`, because a plan file holds the state);
-- Helm: `helm diff upgrade <release> <chart> --version <deployed> --reuse-values --three-way-merge --three-way-merge-mode client`. Same chart and values, so any diff is a change made on the cluster. Needs the [helm-diff](https://github.com/databus23/helm-diff) plugin; `client` mode needs only get/list, so it works on a `-ro` context. Secrets stay hidden;
-- Argo CD: `argocd app diff`, `argocd app resources --orphaned`. Argo CD 3.2.0–3.2.11, 3.3.9 and 3.4.1 can show Secret values in diffs ([CVE-2026-45737](https://osv.dev/vulnerability/CVE-2026-45737)); recon checks the version first.
+- Terraform: `terraform plan` shows drift on managed attributes. It never shows drift on `ignore_changes` attributes (each refresh saves the live value into state, also with `-refresh-only`), so recon reads those live with a read-only cloud CLI and compares them with the `.tf` value;
+- Helm: `helm diff upgrade <release> <chart> --version <deployed> --reuse-values --three-way-merge --three-way-merge-mode client` (needs [helm-diff](https://github.com/databus23/helm-diff) 3.15.13 or newer). Same chart and values, so any diff is a change made on the cluster; Secrets stay hidden. Helm stores releases in Secrets, so this does not work on a `-ro` context without Secret access: there recon compares `helm template` output with `kubectl get -o yaml` for the objects of the task, or gives you the `helm diff` command to run;
+- Argo CD: `argocd app diff`, `argocd app resources --orphaned` (empty unless the AppProject enables `orphanedResources`). Argo CD 3.2.0–3.2.11, 3.3.9 and 3.4.1 can show Secret values in diffs ([CVE-2026-45737](https://osv.dev/vulnerability/CVE-2026-45737)); recon checks the version first.
+
+These commands are not on the allow list, so each asks once. The scanner does not cover Flux yet.
 
 Cloud resources created in the console are not in any code; finding them needs a cloud inventory (Azure Resource Graph, AWS Config), which the kit does not set up.
 

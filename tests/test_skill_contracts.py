@@ -91,8 +91,9 @@ class LiveVsDeclared(unittest.TestCase):
     def test_recon_compares_with_read_only_tools(self):
         recon = (KIT_DIR / "claude/agents/infra-recon.md").read_text(encoding="utf-8")
         self.assertIn("## Drift: declared vs live", recon)
-        for words in ("--three-way-merge-mode client", "plan -refresh-only", "no `-out`", "CVE-2026-45737",
-                      "Never add `--show-secrets`", "do not install it"):
+        for words in ("--three-way-merge-mode client", "3.15.13", "never shows drift on `ignore_changes`", "no `-out`",
+                      "CVE-2026-45737", "Never add `--show-secrets`", "do not install or upgrade it",
+                      "Helm drift not checked on -ro", "empty does not mean none"):
             self.assertIn(words, recon)
 
 
