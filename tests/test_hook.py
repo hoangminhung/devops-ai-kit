@@ -343,6 +343,110 @@ class TerraformSecretReads(HookTestCase):
                 self.assertTrue(any(rule.match(command) for rule in ask))
 
 
+class SecretReadBypasses(HookTestCase):
+    """Found by the independent review: wrappers, flag injection, pipes, globs, plan files.
+
+    The work folder holds real (empty) state files, because globs and recursive searches are checked
+    against the files that exist."""
+
+    DENY = [
+        "unzip -p tfplan tfstate",
+        "unzip -o tfplan && cat tfstate",
+        "TF_CLI_ARGS_output=-json terraform output",
+        "TF_CLI_ARGS_output=pw terraform output",
+        "export TF_CLI_ARGS_output=-json; terraform output",
+        "bash -lc 'terraform output -json'",
+        "sh -ec 'terraform state pull'",
+        "env -i PATH=/usr/bin terraform output -json",
+        "env -u X terraform state pull",
+        "env -S 'terraform output -json'",
+        "timeout -s KILL 5 terraform output -json",
+        "nice -n 5 terraform output pw",
+        "sudo -E terraform state pull",
+        "sudo -u ops cat terraform.tfstate",
+        "eval terraform output -json",
+        "watch -n 5 terraform output -json",
+        "echo pw | xargs terraform output",
+        "find . -exec terraform output -json \\;",
+        "find . -name '*.tfstate' | xargs cat",
+        "ls *.tfstate | xargs jq .",
+        "cat terraform.*",
+        "cat terraform.tfstate.d/*/*",
+        "cat terraform.{tfstate,x}",
+        "cat<terraform.tfstate",
+        "f=terraform.tfstate; cat $f",
+        "terragrunt --working-dir live/db output -json",
+        "terragrunt --log-level info state pull",
+        "cat *",
+        "cd envs/prod && cat *",
+        "grep -rn password .",
+        "rg password",
+        "find . -type f -exec grep -l password {} +",
+        "echo $(cat terraform.tfstate)",
+        "diff <(terraform output -json) old.json",
+        "git add terraform.tfstate",
+    ]
+    ASK = [
+        "unzip -p tfplan",
+        "tar -xOf tfplan",
+        "argocd app list -o yaml",
+        "argocd appset get x -o yaml",
+        "helm diff upgrade r ch --diff-tool vimdiff",
+        "HELM_DIFF_TOOL=x helm diff upgrade r ch",
+        "helm template r ch --post-renderer ./x.sh",
+        "KUBECTL_EXTERNAL_DIFF='sh -c id' kubectl diff -f deploy.yaml",
+        "export KUBECTL_EXTERNAL_DIFF=cat; kubectl diff -f deploy.yaml",
+    ]
+    NOT_DENIED = [
+        "grep -rn --exclude='*.tfstate*' password .",
+        "rg -g '!*.tfstate*' password",
+        "grep -n '*.tfstate' .gitignore",
+        "grep -rn image app/",
+        "tree -I '*.tfstate*'",
+        "sha256sum terraform.tfstate",
+        "git -C infra log --oneline -- terraform.tfstate",
+        "git -C infra status",
+        "ls -l $(pwd)/terraform.tfstate",
+        "find . -name '*.tfstate' -exec ls -l {} \\;",
+        "find . -name '*.yaml' -exec grep image {} +",
+        "argocd app get shop --show-params=false",
+        "cat app/values.yaml",
+        "kubectl get pods -A | grep -v Running",
+        "for ns in a b; do kubectl get pods -n $ns; done",
+        "terraform plan -out=tfplan",
+        "sudo -u ops kubectl get pods",
+    ]
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        for name in ("terraform.tfstate", "envs/prod/terraform.tfstate.backup", "envs/prod/.terraform/terraform.tfstate",
+                     "terraform.tfstate.d/dev/terraform.tfstate", "app/values.yaml", "main.tf", "tfplan"):
+            path = cls.workdir / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.touch()
+
+    def test_denied(self):
+        for command in self.DENY:
+            with self.subTest(command=command):
+                self.assertEqual(self.decision(command)[0], "deny")
+
+    def test_ask(self):
+        for command in self.ASK:
+            with self.subTest(command=command):
+                self.assertEqual(self.decision(command)[0], "ask")
+
+    def test_not_denied(self):
+        for command in self.NOT_DENIED:
+            with self.subTest(command=command):
+                self.assertNotEqual(self.decision(command)[0], "deny")
+
+    def test_recursive_search_skips_backend_config(self):
+        (self.workdir / "modules/db/.terraform").mkdir(parents=True, exist_ok=True)
+        (self.workdir / "modules/db/.terraform/terraform.tfstate").touch()
+        self.assertNotEqual(self.decision("grep -rn bucket modules/")[0], "deny")
+
+
 class DiffAndArgoSecretReads(HookTestCase):
     """Found by the independent review of the live-vs-declared idea."""
 
@@ -351,8 +455,7 @@ class DiffAndArgoSecretReads(HookTestCase):
                         "helm --kube-context x diff upgrade web chart/ --show-secrets-decoded",
                         "kubectl diff -f deploy.yaml --show-secrets",
                         "kubectl --context x diff --show-secrets=true -k overlays/prod",
-                        "KUBECTL_EXTERNAL_DIFF='sh -c id' kubectl diff -f deploy.yaml",
-                        "export KUBECTL_EXTERNAL_DIFF=cat; kubectl diff -f deploy.yaml"):
+                        "helm --burst-limit 100 diff upgrade web chart/ --show-secrets"):
             with self.subTest(command=command):
                 decision, reason = self.decision(command)
                 self.assertEqual(decision, "deny")
