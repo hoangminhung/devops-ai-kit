@@ -256,6 +256,20 @@ class ReviewCases(unittest.TestCase):
             self.assertNotIn(secret, text)
         self.assertIn("<not shown>", text)
 
+    def test_flow_style_lists(self):
+        found = self.scan({"appset.yaml": "kind: ApplicationSet\nmetadata:\n  name: tenants\nspec:\n  template:\n    spec:\n"
+                                          "      ignoreDifferences:\n      - group: \"\"\n        kind: ConfigMap\n"
+                                          "        jsonPointers: [\"/data/x\", /data/y]\n"
+                                          "        managedFieldsManagers: [Go-http-client, kube-controller-manager]\n"
+                                          "      syncPolicy:\n        automated: {prune: true, selfHeal: true}\n"
+                                          "        syncOptions: [CreateNamespace=true, RespectIgnoreDifferences=true, ServerSideApply=true]\n"})
+        self.assertEqual(sorted((f["rule"], f["detail"]) for f in found), [
+            ("RespectIgnoreDifferences", "ApplicationSet tenants"),
+            ("ServerSideApply", "ApplicationSet tenants"),
+            ("ignoreDifferences", "app tenants: group=core kind=ConfigMap paths=/data/x,/data/y "
+                                  "managers=Go-http-client,kube-controller-manager"),
+        ])
+
     def test_worktrees_are_skipped_but_repos_are_not(self):
         tf = 'resource "a" "b" {\n  lifecycle { ignore_changes = [x] }\n}\n'
         found = self.scan({".wt-x/.git": "gitdir: /repo/.git/worktrees/wt-x\n", ".wt-x/main.tf": tf,

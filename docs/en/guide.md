@@ -323,10 +323,10 @@ The most important part of `CLAUDE.md` is the **Environment registry** table: wh
 Which source wins is your team's decision: Claude marks it ⚠️ and asks. Before a change, the `infra-recon` agent compares code and live state for the parts you touch and writes a **Drift** section (field | declared | live | hidden by) with read-only tools:
 
 - Terraform: `terraform plan` shows drift on managed attributes. It never shows drift on `ignore_changes` attributes (each refresh saves the live value into state, also with `-refresh-only`), so recon reads those live with a read-only cloud CLI and compares them with the `.tf` value;
-- Helm: `helm diff upgrade <release> <chart> --version <deployed> --reuse-values --three-way-merge --three-way-merge-mode client` (needs [helm-diff](https://github.com/databus23/helm-diff) 3.15.13 or newer). Same chart and values, so any diff is a change made on the cluster; Secrets stay hidden. Helm stores releases in Secrets, so this does not work on a `-ro` context without Secret access: there recon compares `helm template` output with `kubectl get -o yaml` for the objects of the task, or gives you the `helm diff` command to run;
+- Helm: `helm diff upgrade <release> <chart> --version <deployed> --reuse-values --three-way-merge --three-way-merge-mode client` (needs [helm-diff](https://github.com/databus23/helm-diff) 3.15.13 or newer). Same chart and values, so any diff is a change made on the cluster; Secrets stay hidden. Helm stores releases in Secrets, so this does not work on a `-ro` context without Secret access: there recon compares `helm template` output with `kubectl get -o yaml` for the objects of the task (a difference may also mean values set by hand, so it is labelled "values unknown"), or gives you the `helm diff` command to run;
 - Argo CD: `argocd app diff`, `argocd app resources --orphaned` (empty unless the AppProject enables `orphanedResources`). Argo CD 3.2.0–3.2.11, 3.3.9 and 3.4.1 can show Secret values in diffs ([CVE-2026-45737](https://osv.dev/vulnerability/CVE-2026-45737)); recon checks the version first.
 
-These commands are not on the allow list, so each asks once. The scanner does not cover Flux yet.
+`terraform plan`, `helm diff` and `helm template` are on the allow list; the scanner and the `argocd` commands ask once each. The scanner does not cover Flux yet.
 
 Cloud resources created in the console are not in any code; finding them needs a cloud inventory (Azure Resource Graph, AWS Config), which the kit does not set up.
 

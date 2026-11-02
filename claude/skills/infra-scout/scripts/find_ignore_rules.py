@@ -28,10 +28,10 @@ MAX_LINE = 2000  # longer lines are not YAML or HCL anyone writes by hand
 
 # Strict patterns: a value that does not match is shown as <not shown>.
 K8S_NAME = re.compile(r"[a-z0-9](?:[-a-z0-9.]{0,61}[a-z0-9])?")
-KIND = re.compile(r"[A-Z][A-Za-z0-9]{0,62}")
+KIND = re.compile(r"[A-Z][A-Za-z0-9]{0,39}")
 GROUP = re.compile(r"[a-z0-9](?:[-a-z0-9.]{0,99})?")
 POINTER = re.compile(r"/[A-Za-z0-9_.~/-]{0,120}")
-MANAGER = re.compile(r"[a-z0-9](?:[-a-z0-9.:_]{0,61}[a-z0-9])?")
+MANAGER = re.compile(r"[A-Za-z0-9](?:[-A-Za-z0-9.:_]{0,61}[A-Za-z0-9])?")
 TF_TYPE = re.compile(r"[a-z][a-z0-9_]{0,63}")
 TF_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_-]{0,63}")
 TF_ATTR = re.compile(r'[a-z_][a-z0-9_]{0,63}(?:\[(?:\d{1,4}|"[A-Za-z0-9_./-]{1,40}")\]|\.[a-z_][a-z0-9_]{0,63}){0,8}')
@@ -185,6 +185,14 @@ def value_at(nodes, path):
     return next((nd["value"] for nd in nodes if nd["path"] == path and not nd["item"]), None)
 
 
+def flow_list(value):
+    """`[a, "b"]` → ["a", "b"]; anything else → []."""
+    value = (value or "").strip()
+    if not (value.startswith("[") and value.endswith("]")):
+        return []
+    return [item.strip().strip("'\"") for item in value[1:-1].split(",") if item.strip()]
+
+
 def flow_field(value, field):
     """`{ prune: true, selfHeal: true }` → the value of one field."""
     match = next((m for m in FLOW_FIELD.finditer(value or "") if m.group(1) == field), None)
@@ -204,14 +212,20 @@ def ignore_entries(nodes, base):
         if current is None or len(rest) < 2:
             continue
         field, value = rest[1], nd["value"]
-        if field in ("kind", "name", "group", "namespace") and len(rest) == 2 and value:
+        if field == "group" and len(rest) == 2 and value.strip("'\"") == "":
+            current["group"] = "core"  # `group: ""` is the core API group
+        elif field in ("kind", "name", "group", "namespace") and len(rest) == 2 and value:
             current[field] = safe(value, {"kind": KIND, "group": GROUP}.get(field, K8S_NAME))
-        elif rest[-1] == "[]" and value and field == "jsonPointers":
-            current.setdefault("paths", []).append(safe(value, POINTER))
-        elif rest[-1] == "[]" and value and field == "jqPathExpressions":
-            current.setdefault("paths", []).append("<jq expression>")
-        elif rest[-1] == "[]" and value and field == "managedFieldsManagers":
-            current.setdefault("managers", []).append(safe(value, MANAGER))
+        if field in ("jsonPointers", "jqPathExpressions", "managedFieldsManagers"):
+            # block items (`- /spec/replicas`) come one per node, a flow list (`[a, b]`) on the key's node
+            items = [value] if rest[-1] == "[]" and value else flow_list(value) if len(rest) == 2 else []
+            for entry in items:
+                if field == "jsonPointers":
+                    current.setdefault("paths", []).append(safe(entry, POINTER))
+                elif field == "jqPathExpressions":
+                    current.setdefault("paths", []).append("<jq expression>")
+                else:
+                    current.setdefault("managers", []).append(safe(entry, MANAGER))
     return entries
 
 
@@ -254,10 +268,11 @@ def scan_yaml_doc(rel, lines, offset):
 
     for nd in nodes:
         value, path = nd["value"], nd["path"]
-        if path[-2:] == ("syncOptions", "[]"):
-            if value == "RespectIgnoreDifferences=true":
+        options = [value] if path[-2:] == ("syncOptions", "[]") else flow_list(value) if path[-1:] == ("syncOptions",) else []
+        for option in options:
+            if option == "RespectIgnoreDifferences=true":
                 found.append(finding(rel, nd["line"], "argocd", "RespectIgnoreDifferences", label))
-            elif value == "ServerSideApply=true":
+            elif option == "ServerSideApply=true":
                 found.append(finding(rel, nd["line"], "argocd", "ServerSideApply", label))
         if path[:2] == ("metadata", "annotations") and len(path) == 3:
             key = path[2]
