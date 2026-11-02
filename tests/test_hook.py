@@ -593,10 +593,28 @@ class GitPushTargets(HookTestCase):
         self.assertEqual(self.push("git push --all origin"), "deny")
         self.assertIn("tracks-live", self.push("git push --all origin", block="0", field="permissionDecisionReason"))
 
-    def test_production_repo_name_still_counts(self):
+    def test_production_repo_name_counts_except_for_work_branches(self):
         prod_repo = self.workdir / "gitops-prod"
         subprocess.run(["git", "init", "-q", str(prod_repo)], check=True)
-        self.assertEqual(self.push("git push origin feat/x", cwd=prod_repo), "deny")
+        self.assertEqual(self.push("git push origin main", cwd=prod_repo), "deny")
+        self.assertEqual(self.push("git push -u origin feat/x", cwd=prod_repo), "ask")  # the GitOps PR branch
+
+    def test_review_cases(self):
+        for command in ("git -C . push origin live", "git -c push.default=current push origin live",
+                        "git -C infra push origin HEAD:prod", "git push origin :live",
+                        "git push origin 'refs/heads/*:refs/heads/*'", "git push origin :"):
+            with self.subTest(command=command):
+                cwd = self.workdir if command.startswith("git -C infra") else None
+                self.assertEqual(self.push(command, cwd=cwd), "deny")
+        for command in ("git push --repo prod-remote", "git push --repo=prod-remote"):
+            with self.subTest(command=command):  # the current branch is a work branch, so it asks, but shows the remote
+                self.assertIn("remote=prod-remote", self.push(command, block="0", field="permissionDecisionReason"))
+
+    def test_remote_url_is_checked(self):
+        subprocess.run(["git", "-C", str(self.repo), "remote", "add", "deploy", "https://git.example/gitops-prod.git"],
+                       check=True)
+        self.assertEqual(self.push("git push deploy main"), "deny")
+        self.assertEqual(self.push("git push deploy feat/y"), "ask")
 
 
 class MakeTargets(HookTestCase):

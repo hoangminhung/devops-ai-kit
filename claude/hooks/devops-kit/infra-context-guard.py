@@ -921,16 +921,24 @@ GIT_PUSH_VALUE_FLAGS = {"-o", "--push-option", "--repo", "--receive-pack", "--ex
 def push_destinations(args, cwd):
     """(remote, [destination branches]) of `git push …`: the part after `:` in a refspec, the upstream of the
     current branch for a bare `git push`, every local branch for `--all` / `--mirror`."""
-    pos, i = [], 1
+    pos, i, repo_flag = [], 1, None
     while i < len(args):
         if args[i] in GIT_PUSH_VALUE_FLAGS:
+            if args[i] == "--repo" and i + 1 < len(args):
+                repo_flag = args[i + 1]
             i += 2
             continue
-        if not args[i].startswith("-"):
+        if args[i].startswith("--repo="):
+            repo_flag = args[i].split("=", 1)[1]
+        elif not args[i].startswith("-"):
             pos.append(args[i])
         i += 1
+    if repo_flag and not pos:
+        pos = [repo_flag]
     current = run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=cwd) or "?"
-    if any(a in ("--all", "--mirror", "--branches") for a in args):
+    # `refs/heads/*:refs/heads/*` and `:` (matching) push many branches, like --all
+    wide = any("*" in spec or spec.lstrip("+") == ":" for spec in pos[1:])
+    if wide or any(a in ("--all", "--mirror", "--branches") for a in args):
         branches = run(["git", "for-each-ref", "--format=%(refname:short)", "refs/heads"], cwd=cwd).split()
         return (pos[0] if pos else "origin"), branches or ["?"]
     if len(pos) > 1:
@@ -951,6 +959,19 @@ def work_branch(branch):
     return "/" in branch and branch.split("/", 1)[0].lower() in WORK_BRANCH_PREFIXES
 
 
+def git_push_args(args, cwd):
+    """`git -C dir -c x=y push …` → (["push", …], dir): global flags before the subcommand are skipped."""
+    sub = git_subcommand(args)
+    if sub != "push":
+        return [], cwd
+    i = 0
+    while args[i] != "push":
+        if args[i] == "-C" and i + 1 < len(args):
+            cwd = os.path.join(cwd, os.path.expanduser(args[i + 1]))
+        i += 2 if args[i] in GIT_VALUE_FLAGS else 1
+    return args[i:], cwd
+
+
 def detect_git_push(args, cwd):
     if not args or args[0] != "push":
         return None
@@ -959,9 +980,11 @@ def detect_git_push(args, cwd):
     repo = os.path.basename(top) if top else "?"
     force = " [FORCE]" if any(a in ("-f", "--force", "--force-with-lease") or a.startswith("--force-with-lease=")
                               for a in args) else ""
-    checked = [b for b in branches if not work_branch(b)]  # the prod check skips work branches
+    url = run(["git", "remote", "get-url", remote], cwd=cwd) if re.fullmatch(r"[\w.-]+", remote) else ""
+    # A push to work branches deploys nothing, also in a production GitOps repo: that is how its PRs start.
+    checked = [] if all(work_branch(b) for b in branches) else branches + [repo, remote, url]
     return (f"git push{force} → repo={repo} remote={remote} branch={','.join(branches)} "
-            "(if this repo is watched by Argo CD/Flux, this deploys)", checked + [repo, remote], False)
+            "(if this repo is watched by Argo CD/Flux, this deploys)", checked, False)
 
 
 def detect_make(base, args, cwd):
@@ -1178,7 +1201,7 @@ def analyse_segment(segment, cwd, depth=0, exported=None):
     elif base == "velero":
         hit = detect_velero(args, env, cwd)
     elif base == "git":
-        hit = detect_git_push(args, cwd)
+        hit = detect_git_push(*git_push_args(args, cwd))
     elif base == "psql":
         hit = detect_psql(args)
     elif base in ("make", "gmake"):
