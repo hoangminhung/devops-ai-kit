@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 KIT_DIR = Path(__file__).resolve().parent.parent
@@ -239,6 +240,308 @@ class ForbiddenCommands(HookTestCase):
             command = f"{tool} {flags[tool]} " + " ".join(rest.replace("*", " x ").split())
             with self.subTest(rule=rule, command=command):
                 self.assertEqual(self.decision(command)[0], "deny")
+
+
+def settings_rules(kind):
+    """Claude Code rule matching: `*` matches any text, no `*` at the end means exact."""
+    settings = json.loads((KIT_DIR / "claude" / "settings.devops-kit.json").read_text(encoding="utf-8"))
+    return [re.compile(".*".join(map(re.escape, r[5:-1].split("*"))) + r"\Z")
+            for r in settings["permissions"][kind] if r.startswith("Bash(")]
+
+
+class TerraformSecretReads(HookTestCase):
+    """Checked with terraform 1.14: these print sensitive values in clear text."""
+
+    FORBIDDEN = [
+        "terraform state pull",
+        "terraform -chdir=envs/prod state pull > s.json",
+        "terraform output db_password",
+        "terraform -chdir=envs/prod output db_password",
+        "terraform output -raw db_password",
+        "terraform output -json",
+        "terraform output --json",
+        "terraform output -json=true",
+        "terraform output -state=x.tfstate db_password",
+        "tofu output -json",
+        "terraform show -json",
+        "terraform show -json tfplan",
+        "tofu -chdir=envs/prod show -json",
+        "echo 'nonsensitive(var.pw)' | terraform console",
+        "tofu plan -show-sensitive",
+        "tofu state show -show-sensitive aws_db_instance.db",
+        "terragrunt output -json",
+        "terragrunt run-all output -json",
+        # state files read through the shell
+        "cat terraform.tfstate",
+        "jq . .terraform/terraform.tfstate",
+        "grep -i password envs/prod/terraform.tfstate.backup",
+        "less terraform.tfstate.d/prod/terraform.tfstate",
+        "cat terraform.tfst*",
+        "head -c 500 errored.tfstate",
+        "cp terraform.tfstate /tmp/s.json",
+        "python3 -c \"print(open('terraform.tfstate').read())\"",
+        "jq . < terraform.tfstate",
+        "echo $(cat terraform.tfstate)",
+        "git log -p -- terraform.tfstate",
+        "git show HEAD:terraform.tfstate",
+        "find . -name '*.tfstate' -exec cat {} +",
+    ]
+    ALLOWED = [
+        "terraform output",
+        "terraform output -no-color",
+        "terraform output -json=false",
+        "terraform output -state x.tfstate",
+        "terraform state list",
+        "terraform -chdir=envs/prod state list module.db",
+        "terraform plan -refresh-only",
+        "terraform show tfplan",
+        "ls -la *.tfstate",
+        "echo '*.tfstate' >> .gitignore",
+        "git log --oneline -- terraform.tfstate",
+        "git rm --cached terraform.tfstate",
+        "find . -name '*.tfstate'",
+        "grep '\\.tfstate' .gitignore",
+        "cat main.tf",
+        "cat tfstate-notes.md",
+    ]
+
+    def test_denied(self):
+        for command in self.FORBIDDEN:
+            with self.subTest(command=command):
+                decision, reason = self.decision(command)
+                self.assertEqual(decision, "deny")
+                self.assertIn("devops-ai-kit: blocked:", reason)
+
+    def test_not_denied(self):
+        for command in self.ALLOWED:
+            with self.subTest(command=command):
+                self.assertNotEqual(self.decision(command)[0], "deny")
+
+    def test_show_asks_with_a_warning(self):
+        for command in ("terraform show", "terraform -chdir=envs/prod state show module.db.x", "tofu state show x"):
+            with self.subTest(command=command):
+                decision, reason = self.decision(command)
+                self.assertEqual(decision, "ask")
+                self.assertIn("not mark sensitive", reason)
+
+    def test_output_deny_points_to_output_without_a_name(self):
+        self.assertIn("`terraform output` without a name", self.decision("terraform output pw")[1])
+
+    def test_settings_match_the_hook(self):
+        deny, ask, allow = settings_rules("deny"), settings_rules("ask"), settings_rules("allow")
+        for command in ("terraform state pull", "terraform -chdir=x output -raw pw", "tofu show -json",
+                        "terraform console", "tofu plan -show-sensitive"):
+            with self.subTest(command=command):
+                self.assertTrue(any(rule.match(command) for rule in deny))
+        # ask beats allow: `state list` must not hit an ask rule, `state rm` still must
+        for command in ("terraform state list", "terraform -chdir=x state list", "tofu state list"):
+            with self.subTest(command=command):
+                self.assertFalse(any(rule.match(command) for rule in ask + deny))
+                self.assertTrue(any(rule.match(command) for rule in allow))
+        for command in ("terraform state rm x", "terraform -chdir=x state mv a b", "tofu state push s.json",
+                        "terraform state show x"):
+            with self.subTest(command=command):
+                self.assertTrue(any(rule.match(command) for rule in ask))
+
+
+class SecretReadBypasses(HookTestCase):
+    """Found by the independent review: wrappers, flag injection, pipes, globs, plan files.
+
+    The work folder holds real (empty) state files, because globs and recursive searches are checked
+    against the files that exist."""
+
+    DENY = [
+        "unzip -p tfplan tfstate",
+        "unzip -o tfplan && cat tfstate",
+        "TF_CLI_ARGS_output=-json terraform output",
+        "TF_CLI_ARGS_output=pw terraform output",
+        "export TF_CLI_ARGS_output=-json; terraform output",
+        "bash -lc 'terraform output -json'",
+        "sh -ec 'terraform state pull'",
+        "env -i PATH=/usr/bin terraform output -json",
+        "env -u X terraform state pull",
+        "env -S 'terraform output -json'",
+        "timeout -s KILL 5 terraform output -json",
+        "nice -n 5 terraform output pw",
+        "sudo -E terraform state pull",
+        "sudo -u ops cat terraform.tfstate",
+        "eval terraform output -json",
+        "watch -n 5 terraform output -json",
+        "echo pw | xargs terraform output",
+        "find . -exec terraform output -json \\;",
+        "find . -name '*.tfstate' | xargs cat",
+        "ls *.tfstate | xargs jq .",
+        "cat terraform.*",
+        "cat terraform.tfstate.d/*/*",
+        "cat terraform.{tfstate,x}",
+        "cat<terraform.tfstate",
+        "f=terraform.tfstate; cat $f",
+        "terragrunt --working-dir live/db output -json",
+        "terragrunt --log-level info state pull",
+        "cat *",
+        "cd envs/prod && cat *",
+        "grep -rn password .",
+        "rg password",
+        "find . -type f -exec grep -l password {} +",
+        "echo $(cat terraform.tfstate)",
+        "diff <(terraform output -json) old.json",
+        # second review round
+        "sudo -Eu root terraform output -json",
+        "env -iu FOO terraform output -json",
+        "env - terraform output -json",
+        "echo ns1 | xargs -i kubectl delete ns {}",
+        "xargs -e kubectl delete ns",
+        "watch 'terraform output -json'",
+        "watch -n1 'kubectl delete ns foo'",
+        "bash -o pipefail -c 'terraform output -json'",
+        "bash -O extglob -c 'kubectl delete ns foo'",
+        "bash +x -c 'terraform state pull'",
+        "find . -type f | xargs cat",
+        "find . -type f | xargs grep -i FAKE",
+        "cat $(find . -type f)",
+        "grep -i FAKE $(find . -type f)",
+        "tar cf - .",
+        "grep -R FAKE linked/",
+        "doppler run -- terraform output -json",
+        "aws-vault exec prod -- terraform state pull",
+        "direnv exec . terraform output -json",
+        "flock /tmp/l terraform output -json",
+        "su -c 'terraform output -json'",
+        "unzip -p tfplan",
+        "tar -xOf tfplan",
+        "python3 -m zipfile -e tfplan out/",
+        # third review round
+        "python3 -c \"import json; print(open('envs/prod/terraform.tfstate.backup').read())\"",
+        "python3 -c \"import zipfile;print(zipfile.ZipFile('tfplan').read('tfstate'))\"",
+        "node -e \"const fs=require('fs'); console.log(fs.readFileSync('terraform.tfstate','utf8'))\"",
+        "flock /tmp/l -c 'terraform output -json'",
+        "flock -n /tmp/l -c 'kubectl delete ns foo'",
+        "strace -fo /dev/null terraform output -json",
+        "aws-vault exec prof terraform output -json",
+        "doppler run --command 'terraform output -json'",
+        "sops -d secrets.enc.yaml",
+        "sops decrypt secrets.enc.yaml",
+    ]
+    ASK = [
+        "echo 'terraform output -json' | bash",
+        "bash <<< 'terraform output -json'",
+        "t=terraform; $t output -json",
+        "terragrunt state show x",
+        "unzip -p other.zip",
+        "tar -xOf other.tar",
+        "argocd app list -o yaml",
+        "argocd appset get x -o yaml",
+        "helm diff upgrade r ch --diff-tool vimdiff",
+        "HELM_DIFF_TOOL=x helm diff upgrade r ch",
+        "helm template r ch --post-renderer ./x.sh",
+        "KUBECTL_EXTERNAL_DIFF='sh -c id' kubectl diff -f deploy.yaml",
+        "export KUBECTL_EXTERNAL_DIFF=cat; kubectl diff -f deploy.yaml",
+    ]
+    NOT_DENIED = [
+        "grep -rn --exclude='*.tfstate*' password .",
+        "rg -g '!*.tfstate*' password",
+        "grep -n '*.tfstate' .gitignore",
+        "grep -rn image app/",
+        "tree -I '*.tfstate*'",
+        "sha256sum terraform.tfstate",
+        "git -C infra log --oneline -- terraform.tfstate",
+        "git -C infra status",
+        "ls -l $(pwd)/terraform.tfstate",
+        "find . -name '*.tfstate' -exec ls -l {} \\;",
+        "find . -name '*.yaml' -exec grep image {} +",
+        "argocd app get shop --show-params=false",
+        "cat app/values.yaml",
+        "kubectl get pods -A | grep -v Running",
+        "for ns in a b; do kubectl get pods -n $ns; done",
+        "terraform plan -out=tfplan",
+        "sudo -u ops kubectl get pods",
+        "git add terraform.tfstate",
+        'git commit -m "chore: move tfstate to remote backend"',
+        'gh pr create --title "Remove tfstate from repo" --body x',
+        "cat docs/tfstate.md",
+        "git commit -m 'note: do not run $(terraform output -json)'",
+        "ls *.tfstate* ; kubectl get pods -n $NS",
+        "echo '*.tfstate' >> .gitignore && git commit -am \"$MSG\"",
+        "grep -rn --exclude='*.tfstate*' password docs/",
+        "kubectl get pods -A -o name | xargs -n1 kubectl describe",
+        "grep -rn backend --include='*.tf' .",
+        "unzip -l tfplan",
+        "python3 -c 'print(1); print(2)'",
+    ]
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        for name in ("terraform.tfstate", "envs/prod/terraform.tfstate.backup", "envs/prod/.terraform/terraform.tfstate",
+                     "terraform.tfstate.d/dev/terraform.tfstate", "app/values.yaml", "main.tf", "docs/tfstate.md",
+                     "secrets/terraform.tfstate"):
+            path = cls.workdir / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.touch()
+        with zipfile.ZipFile(cls.workdir / "tfplan", "w") as plan:  # `terraform plan -out` writes a zip like this
+            plan.writestr("tfplan", "")
+            plan.writestr("tfstate", "")
+        (cls.workdir / "linked").mkdir()
+        (cls.workdir / "linked" / "s").symlink_to(cls.workdir / "secrets")
+
+    def test_denied(self):
+        for command in self.DENY:
+            with self.subTest(command=command):
+                self.assertEqual(self.decision(command)[0], "deny")
+
+    def test_ask(self):
+        for command in self.ASK:
+            with self.subTest(command=command):
+                self.assertEqual(self.decision(command)[0], "ask")
+
+    def test_not_denied(self):
+        for command in self.NOT_DENIED:
+            with self.subTest(command=command):
+                self.assertNotEqual(self.decision(command)[0], "deny")
+
+    def test_rg_skips_state_that_git_ignores(self):
+        repo = self.workdir / "gitrepo"
+        (repo / "envs").mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        (repo / ".gitignore").write_text("*.tfstate*\n")
+        (repo / "envs" / "terraform.tfstate").touch()
+        self.assertNotEqual(self.decision("rg password gitrepo/")[0], "deny")
+        self.assertEqual(self.decision("rg --no-ignore password gitrepo/")[0], "deny")
+        self.assertEqual(self.decision("grep -rn password gitrepo/")[0], "deny")
+
+    def test_recursive_search_skips_backend_config(self):
+        (self.workdir / "modules/db/.terraform").mkdir(parents=True, exist_ok=True)
+        (self.workdir / "modules/db/.terraform/terraform.tfstate").touch()
+        self.assertNotEqual(self.decision("grep -rn bucket modules/")[0], "deny")
+
+
+class DiffAndArgoSecretReads(HookTestCase):
+    """Found by the independent review of the live-vs-declared idea."""
+
+    def test_show_secrets_and_external_diff_are_denied(self):
+        for command in ("helm diff upgrade web chart/ --show-secrets",
+                        "helm --kube-context x diff upgrade web chart/ --show-secrets-decoded",
+                        "kubectl diff -f deploy.yaml --show-secrets",
+                        "kubectl --context x diff --show-secrets=true -k overlays/prod",
+                        "helm --burst-limit 100 diff upgrade web chart/ --show-secrets"):
+            with self.subTest(command=command):
+                decision, reason = self.decision(command)
+                self.assertEqual(decision, "deny")
+                self.assertIn("devops-ai-kit: blocked:", reason)
+
+    def test_plain_diffs_are_not_denied(self):
+        for command in ("helm diff upgrade web chart/ --three-way-merge", "kubectl diff -f deploy.yaml"):
+            with self.subTest(command=command):
+                self.assertNotEqual(self.decision(command)[0], "deny")
+
+    def test_argocd_values_ask_with_a_warning(self):
+        for command in ("argocd app get shop -o yaml", "argocd app get shop --show-params",
+                        "argocd --server x app get shop -ojson", "argocd app manifests shop"):
+            with self.subTest(command=command):
+                decision, reason = self.decision(command)
+                self.assertEqual(decision, "ask")
+                self.assertIn("argocd app", reason)
+        self.assertEqual(self.decision("argocd app get shop")[0], None)
 
 
 class MakeTargets(HookTestCase):
