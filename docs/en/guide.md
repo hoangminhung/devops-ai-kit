@@ -313,6 +313,21 @@ Run these two skills once per repo, in a Claude Code session opened in the repo:
 
 The most important part of `CLAUDE.md` is the **Environment registry** table: which env ↔ which context ↔ which subscription ↔ who may change it. The core rule makes Claude check this table before it touches infrastructure.
 
+**Taking over a running system: the code is not the only truth.** Live state can differ from the code, and some differences are hidden from the tools on purpose: Terraform `ignore_changes`, Argo CD `ignoreDifferences` or an app without selfHeal, an HPA that owns `replicas`, a Helm release installed by hand and then edited with `kubectl`. So `/infra-scout` also fills a **Sources of truth** table (component ↔ declared in ↔ fields to read live ↔ source of truth), using `infra-scout/scripts/find_ignore_rules.py`. The script reads the repo only and prints values only (file:line, kinds, field paths), for example:
+
+```text
+| envs/prod/aks.tf:5 | terraform | ignore_changes | azurerm_kubernetes_cluster.main: default_node_pool[0].node_count | … |
+| argocd/apps/shop.yaml:12 | argocd | ignoreDifferences | app shop: group=apps kind=Deployment paths=/spec/replicas | … |
+```
+
+Which source wins is your team's decision: Claude marks it ⚠️ and asks. Before a change, the `infra-recon` agent compares code and live state for the parts you touch and writes a **Drift** section (field | declared | live | hidden by) with read-only tools:
+
+- Terraform: `terraform plan -refresh-only -lock=false` (also shows changes on `ignore_changes` attributes; no `-out`, because a plan file holds the state);
+- Helm: `helm diff upgrade <release> <chart> --version <deployed> --reuse-values --three-way-merge --three-way-merge-mode client`. Same chart and values, so any diff is a change made on the cluster. Needs the [helm-diff](https://github.com/databus23/helm-diff) plugin; `client` mode needs only get/list, so it works on a `-ro` context. Secrets stay hidden;
+- Argo CD: `argocd app diff`, `argocd app resources --orphaned`. Argo CD 3.2.0–3.2.11, 3.3.9 and 3.4.1 can show Secret values in diffs ([CVE-2026-45737](https://osv.dev/vulnerability/CVE-2026-45737)); recon checks the version first.
+
+Cloud resources created in the console are not in any code; finding them needs a cloud inventory (Azure Resource Graph, AWS Config), which the kit does not set up.
+
 **`/infra-rulebook`** fixes repos with a different folder layout. The kit's rules load only for files that match their `paths` (e.g. `**/k8s/**`), so manifests in `deploy/` or Argo CD apps in `apps/*/app.yaml` get no standards. The skill:
 
 1. finds infrastructure files **by content** and shows which ones are covered;

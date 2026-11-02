@@ -15,6 +15,13 @@
 | Access | gitignored names like `kubeconfig.*`, `ai-config`, `.kube/` mentions in README / scripts | **Names** of kubeconfig files and contexts per env (never their content) | Environment registry (kube context / kubeconfig) |
 | Docs | `README*`, `docs/`, `runbooks/`, `adr/` | Where runbooks, ADRs and change records live; doc language | Documentation |
 
+## Sources of truth hints
+
+- `scripts/find_ignore_rules.py <repo>` lists the fields that are owned or ignored outside the code. Group them per component in the **Sources of truth** table; do not paste the whole output.
+- "Declared in" can be more than one place: a Helm chart in the repo plus values set by hand (`helm get values` is blocked: compare with `helm diff` instead), an Argo CD app whose values live in the Application (`helm.values` / `valuesObject`), a kustomize overlay.
+- A component with no Argo CD app, no Terraform resource and no chart in the repo is **live only**: write it so. Nobody's code describes it.
+- Which source wins is a decision of the team, not a fact you can find: mark it ⚠️ and ask.
+
 ## Environment registry hints
 
 - An env usually shows up in several places with the same name: a Terraform env folder, a tfvars file, an inventory folder, an Argo CD destination, a kubeconfig file name. Matching names → ✅; one source only → ⚠️.

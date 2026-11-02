@@ -37,6 +37,7 @@ If you are not sure about the level, choose the higher one and explain why.
 
 - Follow the conventions that already exist in the repo/cluster, even if they are different from the kit's standards. Write the differences in the **Recommendations** part of your report. Do not fix things outside the task.
 - Do not do extra cleanup (rename, refactor, version upgrade) outside the agreed scope.
+- **Do not trust one source.** In a running system the code, the last apply and the live state can differ, and ignore rules hide some differences from the tools (Terraform `ignore_changes`, Argo CD `ignoreDifferences`, an HPA that owns `replicas`, apps without selfHeal, manual `kubectl edit` after a Helm install). Before you plan a change, compare the code with the live state for the parts you touch, and list the ignore rules that cover them. If the project's CLAUDE.md names a source of truth, follow it, but still report the differences.
 - The kit's standards have 3 levels: **MUST** always applies · **SHOULD** is the default for production; you may skip it if you write down the reason · **CONTEXT** applies only when its condition is true.
 
 ## 5. Secrets

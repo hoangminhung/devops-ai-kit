@@ -313,6 +313,21 @@ Chạy 2 skill này một lần cho mỗi repo, trong phiên Claude Code mở �
 
 Quan trọng nhất trong `CLAUDE.md` là bảng **Environment registry**: env nào ↔ context nào ↔ subscription nào ↔ ai được thay đổi. Rule cốt lõi bắt Claude đối chiếu bảng này trước khi chạm hạ tầng.
 
+**Tiếp quản hệ thống đang chạy: code không phải sự thật duy nhất.** Trạng thái thực tế có thể khác code, và một số khác biệt bị cố ý giấu khỏi công cụ: `ignore_changes` của Terraform, `ignoreDifferences` hoặc app không bật selfHeal của Argo CD, HPA nắm `replicas`, Helm release cài tay rồi sửa bằng `kubectl`. Vì vậy `/infra-scout` điền thêm bảng **Sources of truth** (thành phần ↔ khai báo ở đâu ↔ field cần đọc trên live ↔ nguồn chuẩn), dùng `infra-scout/scripts/find_ignore_rules.py`. Script chỉ đọc repo và chỉ in giá trị (file:dòng, kind, đường dẫn field), ví dụ:
+
+```text
+| envs/prod/aks.tf:5 | terraform | ignore_changes | azurerm_kubernetes_cluster.main: default_node_pool[0].node_count | … |
+| argocd/apps/shop.yaml:12 | argocd | ignoreDifferences | app shop: group=apps kind=Deployment paths=/spec/replicas | … |
+```
+
+Nguồn nào là chuẩn là quyết định của team bạn: Claude đánh dấu ⚠️ và hỏi. Trước một thay đổi, agent `infra-recon` so code với live cho phần sẽ đụng tới và viết mục **Drift** (field | khai báo | live | bị che bởi) bằng các công cụ chỉ đọc:
+
+- Terraform: `terraform plan -refresh-only -lock=false` (cũng hiện thay đổi trên các thuộc tính `ignore_changes`; không dùng `-out`, vì file plan chứa state);
+- Helm: `helm diff upgrade <release> <chart> --version <bản đang chạy> --reuse-values --three-way-merge --three-way-merge-mode client`. Cùng chart và values, nên diff nào xuất hiện cũng là thay đổi làm trực tiếp trên cluster. Cần plugin [helm-diff](https://github.com/databus23/helm-diff); mode `client` chỉ cần quyền get/list nên chạy được trên context `-ro`. Secret vẫn được che;
+- Argo CD: `argocd app diff`, `argocd app resources --orphaned`. Argo CD 3.2.0–3.2.11, 3.3.9 và 3.4.1 có thể hiện giá trị Secret trong diff ([CVE-2026-45737](https://osv.dev/vulnerability/CVE-2026-45737)); recon kiểm tra phiên bản trước.
+
+Tài nguyên cloud tạo trên console không nằm trong code nào; muốn tìm chúng cần cloud inventory (Azure Resource Graph, AWS Config), kit không dựng phần này.
+
 **`/infra-rulebook`** xử lý repo có cấu trúc thư mục khác. Rule của kit chỉ nạp cho file khớp `paths` của nó (ví dụ `**/k8s/**`), nên manifest trong `deploy/` hay Argo CD app trong `apps/*/app.yaml` sẽ không có chuẩn nào được áp. Skill này:
 
 1. tìm file hạ tầng **theo nội dung** và cho biết file nào đã được phủ;
