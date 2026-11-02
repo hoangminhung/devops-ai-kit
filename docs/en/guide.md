@@ -313,6 +313,23 @@ Run these two skills once per repo, in a Claude Code session opened in the repo:
 
 The most important part of `CLAUDE.md` is the **Environment registry** table: which env ↔ which context ↔ which subscription ↔ who may change it. The core rule makes Claude check this table before it touches infrastructure.
 
+**Taking over a running system: the code is not the only truth.** Live state can differ from the code, and some differences are hidden from the tools on purpose: Terraform `ignore_changes`, Argo CD `ignoreDifferences` or an app without selfHeal, an HPA that owns `replicas`, a Helm release installed by hand and then edited with `kubectl`. So `/infra-scout` also fills a **Sources of truth** table (component ↔ declared in ↔ fields to read live ↔ source of truth), using `infra-scout/scripts/find_ignore_rules.py`. The script reads the repo only and prints values only (file:line, kinds, field paths), for example:
+
+```text
+| envs/prod/aks.tf:5 | terraform | ignore_changes | azurerm_kubernetes_cluster.main: default_node_pool[0].node_count | … |
+| argocd/apps/shop.yaml:12 | argocd | ignoreDifferences | app shop: group=apps kind=Deployment paths=/spec/replicas | … |
+```
+
+Which source wins is your team's decision: Claude marks it ⚠️ and asks. Before a change, the `infra-recon` agent compares code and live state for the parts you touch and writes a **Drift** section (field | declared | live | hidden by) with read-only tools:
+
+- Terraform: `terraform plan` shows drift on managed attributes. It never shows drift on `ignore_changes` attributes (each refresh saves the live value into state, also with `-refresh-only`), so recon reads those live with a read-only cloud CLI and compares them with the `.tf` value;
+- Helm: `helm diff upgrade <release> <chart> --version <deployed> --reuse-values --three-way-merge --three-way-merge-mode client` (needs [helm-diff](https://github.com/databus23/helm-diff) 3.15.13 or newer). Same chart and values, so any diff is a change made on the cluster; Secrets stay hidden. Helm stores releases in Secrets, so this does not work on a `-ro` context without Secret access: there recon compares `helm template` output with `kubectl get -o yaml` for the objects of the task (a difference may also mean values set by hand, so it is labelled "values unknown"), or gives you the `helm diff` command to run;
+- Argo CD: `argocd app diff`, `argocd app resources --orphaned` (empty unless the AppProject enables `orphanedResources`). Argo CD 3.2.0–3.2.11, 3.3.9 and 3.4.1 can show Secret values in diffs ([CVE-2026-45737](https://osv.dev/vulnerability/CVE-2026-45737)); recon checks the version first.
+
+`terraform plan`, `helm diff` and `helm template` are on the allow list; the scanner and the `argocd` commands ask once each. The scanner does not cover Flux yet.
+
+Cloud resources created in the console are not in any code; finding them needs a cloud inventory (Azure Resource Graph, AWS Config), which the kit does not set up.
+
 **`/infra-rulebook`** fixes repos with a different folder layout. The kit's rules load only for files that match their `paths` (e.g. `**/k8s/**`), so manifests in `deploy/` or Argo CD apps in `apps/*/app.yaml` get no standards. The skill:
 
 1. finds infrastructure files **by content** and shows which ones are covered;

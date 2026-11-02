@@ -24,6 +24,16 @@ The AI must check this table before it touches infrastructure.
 | staging | `aks-stg-weu` | `app` | sub: `<stg-sub>` | `envs/staging` | AI runs it after preview + your confirmation |
 | prod | `aks-prod-weu-ro` (read-only) | `app` | sub: `<prod-sub>` | `envs/prod` | Only through a GitOps PR, or you run it yourself |
 
+## Sources of truth
+
+Where each component is declared, and which fields only the live system knows. Before a change, compare code and live state for the parts you touch (kit rule `00-core` §4).
+
+| Component | Declared in | Read live (ignored or owned outside the code) | Source of truth |
+|---|---|---|---|
+| <e.g. AKS cluster> | `envs/prod` (Terraform) | `default_node_pool[0].node_count` (`ignore_changes`, autoscaler) | Terraform |
+| <e.g. shop> | Argo CD app `shop`, `k8s/overlays/prod` | `spec.replicas` (HPA), selfHeal off | git |
+| <e.g. grafana> | `helm install` by hand, values not in git | everything: compare with `helm diff` | live |
+
 ## Stack & versions
 
 <Fill in by hand; the AI will check again with commands.>

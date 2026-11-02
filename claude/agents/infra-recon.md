@@ -56,9 +56,12 @@ Skip items that are not related, but write down that you skipped them.
    - related alerts that are firing;
    - recent Warning events (`kubectl get events -n <ns> --field-selector type=Warning --sort-by=.lastTimestamp | tail -20`);
    - errors in recent logs (short tail).
-9. **IaC:**
-   - the matching Terraform / Helm / Ansible repo / folder;
-   - Terraform: `terraform plan` to find drift (only when it makes sense and is allowed).
+9. **IaC and drift (declared vs live).** Do not trust one source: compare the code with the live state for the components of the task. The scanner and the `argocd` commands are not on the allow list, so each asks once.
+   - Ignore rules: `python3 <skills folder, usually ~/.claude/skills>/infra-scout/scripts/find_ignore_rules.py <repo>`. The tools below do not report the fields it lists.
+   - Terraform: `terraform -chdir=<dir> plan -input=false` (no `-out`: a plan file holds the state) shows drift on managed attributes as changes it would revert. It takes a state lock; if the backend credentials are read-only and the lock fails, add `-lock=false` (the plan writes nothing) and say so in the report. It never shows drift on `ignore_changes` attributes: each refresh saves the live value into state, so read the live value with a read-only cloud CLI (`az … show --query`, `aws … describe-…`) and compare it with the value in the `.tf` file. Plan output prints attributes that are not marked sensitive: copy only field names and short non-secret values into the report.
+   - Helm: Helm reads its releases from Secrets, so on a `-ro` context (no Secret access) Helm commands fail with `Forbidden`: write "Helm drift not checked on -ro" and compare instead the rendered chart (`helm template` with the repo values) with `kubectl get <kind> <name> -o yaml` for the objects of the task (never Secrets). Values set by hand at install are unknown here, so label a difference "values unknown", not drift. With Helm read access: `helm plugin list` must show `diff` 3.15.13 or newer (do not install or upgrade it), then `helm diff upgrade <release> <chart> --version <deployed chart version> --reuse-values --three-way-merge --three-way-merge-mode client --kube-context <ctx> -n <ns>`. With the same chart and values, any diff is a change made on the cluster. Never add `--show-secrets` (the hook denies it).
+   - Argo CD: `argocd version --short` first. Server 3.2.0–3.2.11, 3.3.9 or 3.4.1 can show Secret values in diffs (CVE-2026-45737, fixed in 3.2.12 / 3.3.10 / 3.4.2): on those, do not run `argocd app diff` for apps that manage Secrets. Then `argocd app get <app>` (sync / health, no `-o yaml`), `argocd app diff <app>`, `argocd app resources <app> --orphaned` (empty unless the AppProject enables `orphanedResources`: empty does not mean none).
+   - Live only: workloads with no GitOps or Helm owner, e.g. `kubectl --context <ctx> get deploy,sts,ds -A -L app.kubernetes.io/managed-by,argocd.argoproj.io/instance`. Cloud resources made in the console need a cloud inventory (Azure Resource Graph, AWS Config): list it under "Could not check" if you have none.
 10. **Risks / unusual things:** EOL components (Promtail, Grafana Agent, ingress-nginx…), versions close to end of support, config that does not follow the standards, resources that nobody manages.
 
 ## Output
@@ -69,6 +72,7 @@ Write the file `01-recon.md` in the task folder:
 # Recon: <task> — <time>
 ## Confirmed target
 ## Key findings           (≤ 10 lines, each line has ✅ or ⚠️)
+## Drift: declared vs live   (field | declared | live | hidden by; "none found" or "not checked" with the reason)
 ## Details by checklist   (command → short output)
 ## Could not check & why
 ## Risks / unusual things to note for the plan

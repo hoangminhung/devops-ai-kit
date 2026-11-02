@@ -29,12 +29,14 @@ The project's CLAUDE.md is what every later session reads first (`00-core` §9).
    - Repo root: the argument, or `git rev-parse --show-toplevel`.
    - Read what exists: `CLAUDE.md` (or `.claude/CLAUDE.md`), `README*`, `PROGRESS.md`, `Makefile`, `docs/` index. If a CLAUDE.md exists, you are in **update mode** (step 6).
 2. **Explore the repo.** Follow `references/detectors.md`: which files to look for per technology, and what to take from them. For big repos, list the folders first, then read a few files per folder; do not read everything.
+   - Run `python3 <skill base directory>/scripts/find_ignore_rules.py <repo root>`. It lists the fields the tools do not report as drift (Terraform `ignore_changes`, Argo CD `ignoreDifferences` / no selfHeal / prune off, HPA / KEDA / VPA, Helm `lookup` and `resource-policy: keep`, kustomize overlays). It prints values only. Use it for the **Sources of truth** table.
 3. **Optional live recon (ask first).**
    - If the user passed `--recon <context>`, or the registry has ⚠️ values that only the cluster can confirm, offer to run the subagent `infra-recon` on the contexts the user names.
    - Give it only those contexts. It must stay read-only and must not switch the current context.
    - Values confirmed by recon become ✅ (cluster).
 4. **Draft CLAUDE.md** from `templates/project-CLAUDE.md`. Fill in:
    - Purpose; **Environment registry** (env ↔ kube context / kubeconfig file ↔ namespace ↔ cloud scope ↔ Terraform dir / workspace ↔ who makes changes);
+   - **Sources of truth** (component ↔ declared in ↔ fields read live ↔ source of truth). The source of truth is ⚠️ until the user names it; the "read live" column comes from `find_ignore_rules.py`;
    - Stack & versions; Repo layout; Project conventions (what the repo does differently from common practice); Common commands (from Makefile / scripts / CI); Documentation settings.
    - Keep the template's "Start of every session" and "Standing rules" sections.
 5. **Confirm the ⚠️ values** with the user. Use the `grill-me` way of asking: short rounds, each question with your recommended answer. Change confirmed values to ✅ (user). Leave values the user does not know as `<to fill in: ...>`.

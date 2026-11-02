@@ -74,6 +74,29 @@ class UntrustedText(unittest.TestCase):
         self.assertIn("**Write values, not text.**", section(scout, "## Rules"))
 
 
+class LiveVsDeclared(unittest.TestCase):
+    def test_core_rule_says_do_not_trust_one_source(self):
+        core = (KIT_DIR / "claude/rules/devops-kit/00-core.md").read_text(encoding="utf-8")
+        part = section(core, "## 4. Existing systems (brownfield)")
+        for words in ("**Do not trust one source.**", "compare the code with the live state", "still report the differences"):
+            self.assertIn(words, part)
+
+    def test_scout_fills_sources_of_truth(self):
+        scout = (KIT_DIR / "claude/skills/infra-scout/SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("scripts/find_ignore_rules.py", scout)
+        self.assertIn("**Sources of truth**", scout)
+        template = (KIT_DIR / "claude/skills/infra-scout/templates/project-CLAUDE.md").read_text(encoding="utf-8")
+        self.assertIn("## Sources of truth", template)
+
+    def test_recon_compares_with_read_only_tools(self):
+        recon = (KIT_DIR / "claude/agents/infra-recon.md").read_text(encoding="utf-8")
+        self.assertIn("## Drift: declared vs live", recon)
+        for words in ("--three-way-merge-mode client", "3.15.13", "never shows drift on `ignore_changes`", "no `-out`",
+                      "CVE-2026-45737", "Never add `--show-secrets`", "do not install or upgrade it",
+                      "Helm drift not checked on -ro", "empty does not mean none"):
+            self.assertIn(words, recon)
+
+
 class Slicing(unittest.TestCase):
     def test_failed_slice_stops_later_slices(self):
         text = SLICING.read_text(encoding="utf-8")
