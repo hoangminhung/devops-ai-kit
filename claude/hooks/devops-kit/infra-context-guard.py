@@ -33,12 +33,14 @@ Environment knobs:
 import configparser
 import fnmatch
 import glob
+import itertools
 import json
 import os
 import re
 import shlex
 import subprocess
 import sys
+import zipfile
 from urllib.parse import unquote, urlsplit
 
 PROD_RE = re.compile(
@@ -110,19 +112,21 @@ TF_STATE_MUTATING = {"rm", "mv", "push", "replace-provider"}
 TF_WORKSPACE_MUTATING = {"select", "new", "delete"}
 TF_FALSE = {"0", "f", "false"}  # Go bool flags: -json=false is off
 # State files hold every value in clear text (passwords, keys); .terraform/terraform.tfstate holds backend config.
-# A plan file (`plan -out`) is a zip with `tfstate` and `tfstate-prev` inside.
-TFSTATE_NAME = re.compile(r"(?:[^\\/]*\.)?tfstate(?:\.[^/]*|-prev)?")
+TFSTATE_NAME = re.compile(r"[^\\/]*\.tfstate(?:\.[^/]*)?")
 TFSTATE_SAMPLES = ("terraform.tfstate", "terraform.tfstate.backup", "errored.tfstate")
 # Commands that may name a state file without printing it.
 STATE_FILE_SAFE = {"ls", "stat", "file", "du", "wc", "test", "[", "touch", "mkdir", "rm", "echo", "printf", "tree",
                    "sha256sum", "sha1sum", "md5sum", "cd", "terraform", "tofu", "terragrunt"}
 GIT_VALUE_FLAGS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"}
-GIT_STATE_SAFE = {"status", "ls-files", "check-ignore", "rm", "log"}
+GIT_PRINTS_FILES = {"show", "diff", "cat-file", "blame", "grep", "archive", "format-patch", "log", "whatchanged"}
 GIT_PATCH_FLAGS = ("-p", "-u", "-U", "--patch", "--word-diff", "--cc", "--color-words", "-L")
 GREP_TOOLS = {"grep", "egrep", "fgrep", "zgrep", "rg", "ag", "ack"}
 ALWAYS_RECURSIVE = {"rg", "ag", "ack"}
 # Commands that pass a file name from elsewhere (a pipe, a loop, a variable) to another command.
 INDIRECT = {"xargs", "parallel", "while", "read", "for", "eval", "source", "."}
+# Copy or pack a whole folder: a state file inside is copied in clear text (`tar cf - .`).
+DIR_READERS = {"tar", "bsdtar", "zip", "7z", "7za", "cp", "rsync", "scp"}
+GLOB_LIMIT = 2000
 FIND_EXEC = {"-exec", "-execdir", "-ok", "-okdir"}
 FIND_FILTERS = {"-name", "-iname", "-path", "-ipath", "-regex", "-iregex", "-wholename"}
 SKIP_DIRS = {".git", "node_modules", ".terraform"}  # .terraform/terraform.tfstate is backend config only
@@ -219,11 +223,14 @@ def peel(tokens):
             # `sudo -u x`, `nice -n 5`, `env -i -u X`, `timeout -s KILL 5`: skip the wrapper's own flags
             value_flags = WRAPPERS[tok]
             i += 1
-            while i < len(tokens) and tokens[i].startswith("-") and tokens[i] != "-":
-                if tok == "env" and tokens[i] in ("-S", "--split-string") and i + 1 < len(tokens):
+            while i < len(tokens) and tokens[i].startswith("-") and (tokens[i] != "-" or tok == "env"):
+                flag_tok = tokens[i]
+                if tok == "env" and flag_tok in ("-S", "--split-string") and i + 1 < len(tokens):
                     tokens[i:i + 2] = tokenize(tokens[i + 1])  # `env -S 'terraform output -json'`
                     break
-                i += 2 if tokens[i] in value_flags else 1
+                # `sudo -Eu root`: in a group of short flags, only the last one can take the next word
+                last = flag_tok if flag_tok.startswith("--") else "-" + flag_tok[-1]
+                i += 2 if "=" not in flag_tok and last in value_flags else 1
             if tok == "timeout" and i < len(tokens):
                 i += 1  # the duration
         else:
@@ -525,13 +532,13 @@ def names_state_file(tok, cwd):
             name = word.rstrip("/").rsplit("/", 1)[-1]
             if "\\" in name:
                 continue  # a regex like `\.tfstate`, not a file
-            if TFSTATE_NAME.fullmatch(name):
+            if TFSTATE_NAME.fullmatch(name) or is_plan_file(word, cwd):
                 return True
             if not any(ch in word for ch in "*?["):
                 continue
             path = word if os.path.isabs(word) else os.path.join(cwd, word)
             try:
-                found = glob.glob(path)[:WALK_LIMIT]
+                found = list(itertools.islice(glob.iglob(path), GLOB_LIMIT))  # `/*/*/*/*/*` must not take seconds
             except (OSError, re.error):
                 found = []
             if any(TFSTATE_NAME.fullmatch(os.path.basename(f)) for f in found):
@@ -540,6 +547,18 @@ def names_state_file(tok, cwd):
             if len(literal) >= 3 and any(fnmatch.fnmatchcase(s, name) for s in TFSTATE_SAMPLES):
                 return True  # the folder may not exist yet, or the command `cd`s first
     return False
+
+
+def is_plan_file(word, cwd):
+    """A saved plan (`terraform plan -out`) is a zip that holds the state (`tfstate`) in clear text."""
+    path = word if os.path.isabs(word) else os.path.join(cwd, word)
+    try:
+        if not os.path.isfile(path) or not zipfile.is_zipfile(path):
+            return False
+        with zipfile.ZipFile(path) as archive:
+            return any(n in ("tfstate", "tfstate-prev") for n in archive.namelist())
+    except (OSError, zipfile.BadZipFile, ValueError):
+        return False
 
 
 def git_subcommand(args):
@@ -598,7 +617,7 @@ def grep_parts(base, args):
     return paths, excludes, recursive
 
 
-def state_files_under(paths, excludes, cwd):
+def state_files_under(paths, excludes, cwd, follow=False):
     """True when a recursive read of `paths` would reach a state file that is not excluded."""
     def excluded(name):
         return any(fnmatch.fnmatchcase(name, pattern) for pattern in excludes)
@@ -610,7 +629,7 @@ def state_files_under(paths, excludes, cwd):
             if TFSTATE_NAME.fullmatch(os.path.basename(root)) and not excluded(os.path.basename(root)):
                 return True
             continue
-        for folder, dirs, files in os.walk(root):
+        for folder, dirs, files in os.walk(root, followlinks=follow):
             dirs[:] = [d for d in dirs if d not in SKIP_DIRS and not excluded(d)]
             for name in files:
                 if TFSTATE_NAME.fullmatch(name) and not excluded(name):
@@ -626,15 +645,22 @@ def state_file_read(base, args, cwd):
     if base in STATE_FILE_SAFE:
         return None
     if base == "git":
-        sub = git_subcommand(args)
-        if sub in GIT_STATE_SAFE and not (sub == "log" and any(t.startswith(GIT_PATCH_FLAGS) for t in args)):
+        sub = git_subcommand(args)  # `git commit -m "move tfstate"` prints nothing
+        if sub not in GIT_PRINTS_FILES or (sub == "log" and not any(t.startswith(GIT_PATCH_FLAGS) for t in args)):
             return None
     if base == "find":
         return None  # names only; its -exec commands are checked in analyse_segment
     words = args
+    if base in DIR_READERS:
+        excludes = [t.split("=", 1)[1] for t in args if t.startswith("--exclude=")]
+        dirs = [t for t in args if not t.startswith("-") and os.path.isdir(os.path.join(cwd, t))]
+        if dirs and state_files_under(dirs, excludes, cwd):
+            return f"{base} on a folder that holds a Terraform state file (it is copied in clear text)"
     if base in GREP_TOOLS:
         paths, excludes, recursive = grep_parts(base, args)
-        if recursive and state_files_under(paths, excludes, cwd):
+        follow = any(t in ("-R", "-L", "--follow", "--dereference-recursive") or
+                     (t.startswith("-") and not t.startswith("--") and "R" in t) for t in args)
+        if recursive and state_files_under(paths, excludes, cwd, follow):
             return (f"{base} searches a folder that holds a Terraform state file "
                     "(add --exclude='*.tfstate*', or rg -g '!*.tfstate*')")
         words = paths
@@ -927,31 +953,55 @@ def exported_vars(segment, cwd):
     return found
 
 
+# Tools that run the command after `--` (secrets managers, version managers).
+RUN_AFTER_DASHDASH = {"aws-vault", "doppler", "mise", "op", "dotenv", "infisical", "chamber", "sops"}
+# Tools that run a command after a fixed number of words: `flock FILE cmd`, `direnv exec DIR cmd`.
+RUN_AFTER_WORDS = {"flock": 1, "taskset": 1, "direnv": 1, "strace": 0, "ltrace": 0}
+
+
 def nested_command(base, args):
-    """The command text that `bash -lc`, `eval`, `watch` or `xargs` runs, or None."""
-    if base in SHELLS:
-        for i, tok in enumerate(args):
-            if not tok.startswith("-"):
-                return None  # `bash script.sh`: a script file is not read (guide §8)
-            if re.fullmatch(r"-[A-Za-z]*c[A-Za-z]*", tok):
-                rest = [t for t in args[i + 1:] if not t.startswith("-")]
+    """The command text that `bash -lc`, `eval`, `watch`, `xargs` or a runner such as `doppler run --`
+    runs, or None. "" means: it runs something the hook cannot see."""
+    if base in SHELLS or base in ("su", "script"):
+        i = 0
+        while i < len(args):
+            tok = args[i]
+            if tok in ("-o", "-O", "+o", "+O", "--rcfile", "--init-file"):
+                i += 2  # `bash -o pipefail -c '…'`
+                continue
+            if not tok.startswith(("-", "+")):
+                break
+            if re.fullmatch(r"-[A-Za-z]*c[A-Za-z]*|--command", tok):
+                rest = [t for t in args[i + 1:] if not t.startswith(("-", "+"))]
                 return rest[0] if rest else ""
-        return None
+            i += 1
+        if base in SHELLS and (i >= len(args) or args[i].startswith("<")):
+            return ""  # `echo '…' | bash`, `bash <<< '…'`: commands from stdin
+        return None  # `bash script.sh`: a script file is not read (guide §8)
     if base == "eval":
         return " ".join(args)
     if base == "watch":
         i = 0
         while i < len(args) and args[i].startswith("-"):
             i += 2 if args[i] in ("-n", "--interval", "-q", "--equexit") else 1
-        return shlex.join(args[i:])
+        return " ".join(args[i:])  # watch runs its words through `sh -c`
     if base in ("xargs", "parallel"):
-        value_flags = {"-I", "-i", "-n", "-P", "-d", "-L", "-a", "-E", "-e", "-s", "-j", "--max-args",
-                       "--max-procs", "--delimiter", "--arg-file", "--replace", "--jobs"}
+        # -i / -e / --replace take a value only when it is attached (`-i{}`), so they are not listed here
+        value_flags = {"-I", "-n", "-P", "-d", "-L", "-a", "-E", "-s", "-j", "--max-args",
+                       "--max-procs", "--delimiter", "--arg-file", "--jobs"}
         i = 0
         while i < len(args) and args[i].startswith("-"):
             i += 2 if args[i] in value_flags else 1
         # the input words are added at the end: `echo pw | xargs terraform output` = `terraform output pw`
         return shlex.join(args[i:] + ["XARGS_INPUT"]) if i < len(args) else ""
+    if base in RUN_AFTER_DASHDASH and "--" in args:
+        return shlex.join(args[args.index("--") + 1:])
+    if base in RUN_AFTER_WORDS:
+        rest = args[1:] if base == "direnv" and args[:1] == ["exec"] else args
+        i = 0
+        while i < len(rest) and rest[i].startswith("-"):
+            i += 2 if rest[i] in ("-o", "-e", "-p", "-s", "-w") else 1
+        return shlex.join(rest[i + RUN_AFTER_WORDS[base]:])
     return None
 
 
@@ -1014,8 +1064,12 @@ def analyse_segment(segment, cwd, depth=0, exported=None):
         base = base[:-4]
     args = tokens[1:]
 
+    if base.startswith("$"):
+        return [("command name from a variable (`$t output`): the hook cannot check it", [], False)]
     if depth < 3:
         nested = nested_command(base, args)
+        if nested == "" and base in SHELLS:
+            return [(f"{base} reads commands from stdin: the hook cannot check them", [], False)]
         if nested is not None:
             return analyse_command(nested, cwd, depth + 1)
         if base == "find":
@@ -1037,6 +1091,8 @@ def analyse_segment(segment, cwd, depth=0, exported=None):
         hit = detect_helm(args, env, cwd)
     elif base in ("terraform", "tofu"):
         hit = detect_terraform(base, args, env, cwd) or terraform_state_view(base, args)
+    elif base == "terragrunt":
+        hit = terraform_state_view(base, [a for a in args if a in ("show", "state") or a.startswith("-")])
     elif base == "az":
         hit = detect_az(args, env)
     elif base == "aws":
@@ -1181,7 +1237,8 @@ def analyse_command(command, cwd, depth=0):
     hits, exported = [], {}
     if depth < 3:
         # `echo $(cat terraform.tfstate)`, `diff <(terraform output -json) x`: check the inner commands too
-        for inner in re.findall(r"\$\(([^()]*)\)|<\(([^()]*)\)|`([^`]*)`", command):
+        unquoted = re.sub(r"'[^']*'", "''", command)  # `git commit -m 'do not run $(x)'` runs nothing
+        for inner in re.findall(r"\$\(([^()]*)\)|<\(([^()]*)\)|`([^`]*)`", unquoted):
             hits.extend(analyse_command(next(part for part in inner if part), cwd, depth + 1))
     segments = [seg.strip() for seg in SEGMENT_SPLIT.split(command) if seg.strip()]
     for segment in segments:
@@ -1195,23 +1252,39 @@ def analyse_command(command, cwd, depth=0):
     return hits
 
 
+def find_reaches_state(find_args, cwd):
+    """True when `find <dirs>` without a name filter lists a state file."""
+    if any(t in FIND_FILTERS for t in find_args):
+        return False
+    roots = []
+    for tok in find_args:
+        if tok.startswith(("-", "(", "!")):
+            break
+        roots.append(tok)
+    return state_files_under(roots, [], cwd)
+
+
 def passed_on(segments, cwd):
-    """`find -name '*.tfstate' | xargs cat`, `f=x.tfstate; cat $f`, `for f in *.tfstate`: a state file
-    name given to another command through a pipe, a loop or a variable."""
-    named = indirect = False
+    """A state file name given to another command: `find -name '*.tfstate' | xargs cat`,
+    `find . -type f | xargs cat`, `f=x.tfstate; cat $f`, `cat $(find . -type f)`."""
+    listed, state_vars = False, set()
     for segment in segments:
         tokens = tokenize(segment)
-        if any(names_state_file(t, cwd) for t in tokens):
-            named = True
-        body, _ = peel(tokens)
+        body, env = peel(tokens)
+        state_vars |= {key for key, value in env.items() if names_state_file(value, cwd)}
         if not body:
             continue
         base = re.split(r"[\\/]", body[0])[-1]
-        if base in INDIRECT or (base not in STATE_FILE_SAFE and any("$" in t for t in body[1:])):
-            indirect = True
-    if named and indirect:
-        raise Blocked("a Terraform state file name passed to another command (a pipe to xargs, a loop or a "
-                      "variable); state holds every value in clear text")
+        reader = base not in STATE_FILE_SAFE and base != "find"
+        if base in ("xargs", "parallel", "while", "read") and listed:
+            raise Blocked(f"Terraform state file names piped to {base} (state holds every value in clear text)")
+        if reader and any(re.search(r"\$\{?" + re.escape(var) + r"\b", t) for var in state_vars for t in body[1:]):
+            raise Blocked("a variable that holds a Terraform state file name (state holds every value in clear text)")
+        for inner in re.findall(r"\$\(\s*find\s([^()]*)\)", segment):
+            if reader and find_reaches_state(tokenize(inner), cwd):
+                raise Blocked(f"{base} on files listed by find, which include a Terraform state file")
+        if any(names_state_file(t, cwd) for t in body[1:]) or (base == "find" and find_reaches_state(body[1:], cwd)):
+            listed = True
 
 
 def main():

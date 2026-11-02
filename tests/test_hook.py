@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 KIT_DIR = Path(__file__).resolve().parent.parent
@@ -384,11 +385,39 @@ class SecretReadBypasses(HookTestCase):
         "find . -type f -exec grep -l password {} +",
         "echo $(cat terraform.tfstate)",
         "diff <(terraform output -json) old.json",
-        "git add terraform.tfstate",
-    ]
-    ASK = [
+        # second review round
+        "sudo -Eu root terraform output -json",
+        "env -iu FOO terraform output -json",
+        "env - terraform output -json",
+        "echo ns1 | xargs -i kubectl delete ns {}",
+        "xargs -e kubectl delete ns",
+        "watch 'terraform output -json'",
+        "watch -n1 'kubectl delete ns foo'",
+        "bash -o pipefail -c 'terraform output -json'",
+        "bash -O extglob -c 'kubectl delete ns foo'",
+        "bash +x -c 'terraform state pull'",
+        "find . -type f | xargs cat",
+        "find . -type f | xargs grep -i FAKE",
+        "cat $(find . -type f)",
+        "grep -i FAKE $(find . -type f)",
+        "tar cf - .",
+        "grep -R FAKE linked/",
+        "doppler run -- terraform output -json",
+        "aws-vault exec prod -- terraform state pull",
+        "direnv exec . terraform output -json",
+        "flock /tmp/l terraform output -json",
+        "su -c 'terraform output -json'",
         "unzip -p tfplan",
         "tar -xOf tfplan",
+        "python3 -m zipfile -e tfplan out/",
+    ]
+    ASK = [
+        "echo 'terraform output -json' | bash",
+        "bash <<< 'terraform output -json'",
+        "t=terraform; $t output -json",
+        "terragrunt state show x",
+        "unzip -p other.zip",
+        "tar -xOf other.tar",
         "argocd app list -o yaml",
         "argocd appset get x -o yaml",
         "helm diff upgrade r ch --diff-tool vimdiff",
@@ -415,16 +444,31 @@ class SecretReadBypasses(HookTestCase):
         "for ns in a b; do kubectl get pods -n $ns; done",
         "terraform plan -out=tfplan",
         "sudo -u ops kubectl get pods",
+        "git add terraform.tfstate",
+        'git commit -m "chore: move tfstate to remote backend"',
+        'gh pr create --title "Remove tfstate from repo" --body x',
+        "cat docs/tfstate.md",
+        "git commit -m 'note: do not run $(terraform output -json)'",
+        "ls *.tfstate* ; kubectl get pods -n $NS",
+        "echo '*.tfstate' >> .gitignore && git commit -am \"$MSG\"",
+        "grep -rn --exclude='*.tfstate*' password docs/",
+        "kubectl get pods -A -o name | xargs -n1 kubectl describe",
     ]
 
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
         for name in ("terraform.tfstate", "envs/prod/terraform.tfstate.backup", "envs/prod/.terraform/terraform.tfstate",
-                     "terraform.tfstate.d/dev/terraform.tfstate", "app/values.yaml", "main.tf", "tfplan"):
+                     "terraform.tfstate.d/dev/terraform.tfstate", "app/values.yaml", "main.tf", "docs/tfstate.md",
+                     "secrets/terraform.tfstate"):
             path = cls.workdir / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.touch()
+        with zipfile.ZipFile(cls.workdir / "tfplan", "w") as plan:  # `terraform plan -out` writes a zip like this
+            plan.writestr("tfplan", "")
+            plan.writestr("tfstate", "")
+        (cls.workdir / "linked").mkdir()
+        (cls.workdir / "linked" / "s").symlink_to(cls.workdir / "secrets")
 
     def test_denied(self):
         for command in self.DENY:
