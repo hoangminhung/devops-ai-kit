@@ -544,6 +544,104 @@ class DiffAndArgoSecretReads(HookTestCase):
         self.assertEqual(self.decision("argocd app get shop")[0], None)
 
 
+class GitPushTargets(HookTestCase):
+    """The production check looks at the branch a push writes to, not at every word of the branch name."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        git = ["git", "-c", "user.email=t@example.com", "-c", "user.name=t", "-c", "init.defaultBranch=main"]
+        remote = cls.workdir / "remote.git"
+        cls.repo = cls.workdir / "infra"
+        subprocess.run(git + ["init", "-q", "--bare", str(remote)], check=True)
+        subprocess.run(git + ["init", "-q", str(cls.repo)], check=True)
+        run = lambda *a: subprocess.run(git + ["-C", str(cls.repo), *a], check=True, capture_output=True)
+        run("commit", "-q", "--allow-empty", "-m", "x")
+        run("remote", "add", "origin", str(remote))
+        run("push", "-q", "origin", "main:live")
+        run("checkout", "-q", "-b", "tracks-live", "--track", "origin/live")
+        run("checkout", "-q", "-b", "feat/live-vs-declared")
+
+    def push(self, command, cwd=None, block="1", field="permissionDecision"):
+        payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command},
+                              "cwd": str(cwd or self.repo)}).encode()
+        result = subprocess.run([sys.executable, str(HOOK)], input=payload, capture_output=True, timeout=30,
+                                env={"PATH": self.path, "HOME": str(self.home), "DEVOPS_KIT_BLOCK_PROD": block})
+        return json.loads(result.stdout)["hookSpecificOutput"][field]
+
+    def test_work_branch_with_live_in_its_name_asks(self):
+        self.assertEqual(self.push("git push -u origin feat/live-vs-declared"), "ask")
+        self.assertEqual(self.push("git push origin HEAD"), "ask")
+        self.assertEqual(self.push("git push -u origin fix/prod-typo"), "ask")
+
+    def test_push_to_a_production_branch_is_denied(self):
+        for command in ("git push origin HEAD:live", "git push origin feat/x:refs/heads/prod",
+                        "git push origin +main:production", "git push origin live-vs-declared",
+                        "git push -o ci.skip origin HEAD:live"):
+            with self.subTest(command=command):
+                self.assertEqual(self.push(command), "deny")
+
+    def test_bare_push_uses_the_upstream(self):
+        subprocess.run(["git", "-C", str(self.repo), "checkout", "-q", "tracks-live"], check=True)
+        try:
+            self.assertEqual(self.push("git push"), "deny")  # pushes to origin/live
+        finally:
+            subprocess.run(["git", "-C", str(self.repo), "checkout", "-q", "feat/live-vs-declared"], check=True)
+
+    def test_push_all_checks_every_branch(self):
+        # local branch `tracks-live` is not a work branch and ends in the word `live`
+        self.assertEqual(self.push("git push --all origin"), "deny")
+        self.assertIn("tracks-live", self.push("git push --all origin", block="0", field="permissionDecisionReason"))
+
+    def test_production_repo_name_counts_except_for_work_branches(self):
+        prod_repo = self.workdir / "gitops-prod"
+        subprocess.run(["git", "init", "-q", str(prod_repo)], check=True)
+        self.assertEqual(self.push("git push origin main", cwd=prod_repo), "deny")
+        self.assertEqual(self.push("git push -u origin feat/x", cwd=prod_repo), "ask")  # the GitOps PR branch
+
+    def test_review_cases(self):
+        for command in ("git -C . push origin live", "git -c push.default=current push origin live",
+                        "git -C infra push origin HEAD:prod", "git push origin :live",
+                        "git push origin 'refs/heads/*:refs/heads/*'", "git push origin :"):
+            with self.subTest(command=command):
+                cwd = self.workdir if command.startswith("git -C infra") else None
+                self.assertEqual(self.push(command, cwd=cwd), "deny")
+        for command in ("git push --repo prod-remote", "git push --repo=prod-remote"):
+            with self.subTest(command=command):  # the current branch is a work branch, so it asks, but shows the remote
+                self.assertIn("remote=prod-remote", self.push(command, block="0", field="permissionDecisionReason"))
+
+    def test_pushes_that_delete_remote_branches_get_no_work_branch_exemption(self):
+        clone = self.workdir / "only-feat"
+        subprocess.run(["git", "init", "-q", "-b", "feat/a", str(clone)], check=True)
+        subprocess.run(["git", "-C", str(clone), "-c", "user.email=t@example.com", "-c", "user.name=t",
+                        "commit", "-q", "--allow-empty", "-m", "x"], check=True)
+        for command in ("git push --mirror prod-remote", "git push --all --prune prod-remote",
+                        "git push --prune prod-remote 'refs/heads/*:refs/heads/*'"):
+            with self.subTest(command=command):
+                self.assertEqual(self.push(command, cwd=clone), "deny")
+
+    def test_prune_checks_the_branches_the_remote_has(self):
+        subprocess.run(["git", "-C", str(self.repo), "fetch", "-q", "origin"], check=True)  # origin/live is tracked
+        self.assertEqual(self.push("git push --prune origin 'refs/heads/*:refs/heads/*'"), "deny")
+        self.assertEqual(self.push("git push --prune origin 'refs/heads/feat/*:refs/heads/feat/*'"), "deny")
+
+    def test_wildcard_checks_the_branches_it_writes(self):
+        for command in ("git push origin 'feat/*:prod/*'", "git push origin 'refs/heads/feat/*:refs/heads/live/*'",
+                        "git push origin '+refs/heads/tracks-*:refs/heads/*'"):  # writes `live`
+            with self.subTest(command=command):
+                self.assertEqual(self.push(command), "deny")
+
+    def test_work_branches_are_not_checked_by_name_in_a_mixed_push(self):
+        self.assertEqual(self.push("git push origin feat/live-vs-declared main"), "ask")
+        self.assertEqual(self.push("git push origin 'refs/heads/feat/*:refs/heads/feat/*'"), "ask")
+
+    def test_remote_url_is_checked(self):
+        subprocess.run(["git", "-C", str(self.repo), "remote", "add", "deploy", "https://git.example/gitops-prod.git"],
+                       check=True)
+        self.assertEqual(self.push("git push deploy main"), "deny")
+        self.assertEqual(self.push("git push deploy feat/y"), "ask")
+
+
 class MakeTargets(HookTestCase):
     def test_mutating_target_shows_variables_and_production(self):
         decision, reason = self.decision("make apply e=prod")

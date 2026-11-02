@@ -912,16 +912,99 @@ def detect_velero(args, env, cwd):
     return (f"velero {pos[0]} {pos[1]} → {kube_summary(ctx, None, kc_name)}", [ctx, kc_name], ctx.endswith("-ro"))
 
 
+# Work branches: a push there deploys nothing, even when the name has `live` or `prod` in it.
+WORK_BRANCH_PREFIXES = {"feat", "feature", "fix", "bugfix", "hotfix", "chore", "docs", "refactor", "test", "tests",
+                        "ci", "perf", "build", "style", "wip", "dependabot", "renovate"}
+GIT_PUSH_VALUE_FLAGS = {"-o", "--push-option", "--repo", "--receive-pack", "--exec"}
+
+
+def push_destinations(args, cwd):
+    """(remote, [destination branches]) of `git push …`: the part after `:` in a refspec, the upstream of the
+    current branch for a bare `git push`, every local branch for `--all` / `--mirror`."""
+    pos, i, repo_flag = [], 1, None
+    while i < len(args):
+        if args[i] in GIT_PUSH_VALUE_FLAGS:
+            if args[i] == "--repo" and i + 1 < len(args):
+                repo_flag = args[i + 1]
+            i += 2
+            continue
+        if args[i].startswith("--repo="):
+            repo_flag = args[i].split("=", 1)[1]
+        elif not args[i].startswith("-"):
+            pos.append(args[i])
+        i += 1
+    if repo_flag and not pos:
+        pos = [repo_flag]
+    current = run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=cwd) or "?"
+    local = lambda: run(["git", "for-each-ref", "--format=%(refname:short)", "refs/heads"], cwd=cwd).split()
+    if any(a in ("--all", "--mirror", "--branches") for a in args) or any(s.lstrip("+") == ":" for s in pos[1:]):
+        return (pos[0] if pos else "origin"), local() or ["?"]
+    if any("*" in spec for spec in pos[1:]):
+        # `feat/*:prod/*` writes prod/<what * matched> for each local branch that matches feat/*
+        dests, branches = [], local()
+        for spec in pos[1:]:
+            src, _, dst = spec.lstrip("+").partition(":")
+            src, dst = (part.replace("refs/heads/", "", 1) for part in (src, dst or src))
+            if "*" not in spec:
+                dests.append(dst)
+                continue
+            source = re.compile(re.escape(src).replace(r"\*", "(.*)"))
+            for branch in branches:
+                match = source.fullmatch(branch)
+                if match:
+                    dests.append(dst.replace("*", match.group(1), 1))
+        return pos[0], dests or ["?"]
+    if len(pos) > 1:
+        dests = []
+        for spec in pos[1:]:
+            dst = spec.lstrip("+").split(":")[-1] or spec.lstrip("+").split(":")[0]
+            dst = current if dst == "HEAD" else dst
+            dests.append(dst[len("refs/heads/"):] if dst.startswith("refs/heads/") else dst)
+        return pos[0], dests
+    upstream = run(["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], cwd=cwd)
+    if upstream and "/" in upstream and not pos:
+        remote, _, branch = upstream.partition("/")
+        return remote, [branch]  # `git push` on a branch that tracks origin/main pushes to main
+    return (pos[0] if pos else "origin"), [current]
+
+
+def work_branch(branch):
+    return "/" in branch and branch.split("/", 1)[0].lower() in WORK_BRANCH_PREFIXES
+
+
+def git_push_args(args, cwd):
+    """`git -C dir -c x=y push …` → (["push", …], dir): global flags before the subcommand are skipped."""
+    sub = git_subcommand(args)
+    if sub != "push":
+        return [], cwd
+    i = 0
+    while args[i] != "push":
+        if args[i] == "-C" and i + 1 < len(args):
+            cwd = os.path.join(cwd, os.path.expanduser(args[i + 1]))
+        i += 2 if args[i] in GIT_VALUE_FLAGS else 1
+    return args[i:], cwd
+
+
 def detect_git_push(args, cwd):
     if not args or args[0] != "push":
         return None
-    pos = [a for a in args[1:] if not a.startswith("-")]
-    remote = pos[0] if pos else "origin"
-    branch = pos[1] if len(pos) > 1 else run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=cwd) or "?"
+    remote, branches = push_destinations(args, cwd)
     top = run(["git", "rev-parse", "--show-toplevel"], cwd=cwd)
     repo = os.path.basename(top) if top else "?"
-    force = " [FORCE]" if any(a in ("-f", "--force", "--force-with-lease") for a in args) else ""
-    return (f"git push{force} → repo={repo} remote={remote} branch={branch} (if this repo is watched by Argo CD/Flux, this deploys)", [branch, repo], False)
+    force = " [FORCE]" if any(a in ("-f", "--force", "--force-with-lease") or a.startswith("--force-with-lease=")
+                              for a in args) else ""
+    url = run(["git", "remote", "get-url", remote], cwd=cwd) if re.fullmatch(r"[\w.-]+", remote) else ""
+    # A push to work branches deploys nothing, also in a production GitOps repo: that is how its PRs start.
+    # --mirror / --prune also delete remote branches the local repo does not have, so they never qualify.
+    deletes = any(a in ("--mirror", "--prune") for a in args)
+    work_only = all(work_branch(b) for b in branches) and not deletes
+    checked = [] if work_only else [b for b in branches if not work_branch(b)] + [repo, remote, url]
+    if deletes and re.fullmatch(r"[\w.-]+", remote):
+        # branches the remote had at the last fetch (no network): the ones --mirror / --prune may delete
+        tracked = run(["git", "for-each-ref", "--format=%(refname:short)", f"refs/remotes/{remote}"], cwd=cwd).split()
+        checked += [b for b in (t.split("/", 1)[-1] for t in tracked) if not work_branch(b)]
+    return (f"git push{force} → repo={repo} remote={remote} branch={','.join(branches)} "
+            "(if this repo is watched by Argo CD/Flux, this deploys)", checked, False)
 
 
 def detect_make(base, args, cwd):
@@ -1138,7 +1221,7 @@ def analyse_segment(segment, cwd, depth=0, exported=None):
     elif base == "velero":
         hit = detect_velero(args, env, cwd)
     elif base == "git":
-        hit = detect_git_push(args, cwd)
+        hit = detect_git_push(*git_push_args(args, cwd))
     elif base == "psql":
         hit = detect_psql(args)
     elif base in ("make", "gmake"):
