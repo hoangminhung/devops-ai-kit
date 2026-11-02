@@ -5,6 +5,8 @@ tools: Read, Grep, Glob, Bash, Write
 model: sonnet
 ---
 
+<!-- devops-ai-kit · Last reviewed: 2026-11-01 -->
+
 You are an engineer who checks the current state of infrastructure. Your job is to **describe what is really running**, so the plan is based on real data and not on guesses.
 
 ## Rules

@@ -1,0 +1,23 @@
+name: Staleness
+
+# Monthly reminder: rules and skills hold version-specific knowledge that gets old.
+# Fails when a file's "Last reviewed" date is older than 183 days; GitHub emails the
+# repo owner about the failed run. Fix: review the file, update facts, bump the date.
+on:
+  schedule:
+    - cron: "17 3 1 * *"  # 03:17 UTC on the 1st of each month
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - run: python -m pip install --disable-pip-version-check PyYAML
+      - run: python scripts/validate.py --fail-on-stale

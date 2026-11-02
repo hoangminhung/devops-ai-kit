@@ -15,6 +15,8 @@
 - First benchmark (`scenarios/RESULTS.md`): with the kit, Opus and Sonnet pass 11 / 11 scenarios (0 / 11 without the kit, mostly because the checks test the kit's workflow). Sonnet without the kit tried to decode a production DB password; with the kit the hook denies it. The kit about doubles the cost of a task and adds ~9,300 context tokens per request.
 - Agents write each command in full (no `K="kubectl …"; $K`), so permission rules can match them; found by the benchmark.
 - `scenarios/benchmark.sh`: runs the scenarios without and with the kit, per model, in a separate logged-in Claude config dir (never the real one), and writes a table: passed, prompts, cost, context tokens of the first request (`benchmark_report.py`). `lib.sh` has a `metrics` helper; cluster scenarios declare `Headless env:` and are skipped while the sandbox is down; `prepare.sh` gets `PREPARE_NO_KIT=1` and unique run folders.
+- Release integrity: install a release tag, not `main` (README and guide now `git checkout` the latest tag); `./install.sh` warns when the checkout is not a release tag, has local changes, or the tag's signature cannot be checked (a reminder, not a security control: verify the tag before checkout). Guide §9 explains how to verify signed tags and how the maintainer signs them with an SSH key.
+- `validate.py` warns about rules and skills whose `Last reviewed` date is older than 183 days or have no date (`--stale-days`, `--fail-on-stale`); `infra-docs`, `infra-task` and the agents now have a date; a monthly workflow fails on them so the owner gets an email.
 
 ## 1.2.0 — 2026-10-31
 

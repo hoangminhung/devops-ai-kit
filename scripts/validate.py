@@ -8,6 +8,8 @@ Vietnamese text is left in English-only files.
 
 Usage: python3 scripts/validate.py      (exit code 1 on any error)
 """
+import argparse
+import datetime as dt
 import json
 import re
 import sys
@@ -198,7 +200,29 @@ def check_english_only():
                 break
 
 
-def main():
+REVIEWED = re.compile(r"Last reviewed: (\d{4}-\d{2}-\d{2})")
+
+
+def stale_reviews(kit_dir, today, max_days):
+    """[(relative path, review date or "no date")] for rules, SKILL.md files and agents not reviewed in max_days."""
+    claude = kit_dir / "claude"
+    files = [*claude.glob("rules/**/*.md"), *claude.glob("skills/*/SKILL.md"), *claude.glob("agents/*.md")]
+    stale = []
+    for path in sorted(files):
+        match = REVIEWED.search(path.read_text(encoding="utf-8"))
+        if not match:
+            stale.append((path.relative_to(kit_dir), "no date"))
+        elif (today - dt.date.fromisoformat(match.group(1))).days > max_days:
+            stale.append((path.relative_to(kit_dir), match.group(1)))
+    return stale
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Check the kit's rules, skills, agents and settings.")
+    parser.add_argument("--stale-days", type=int, default=183,
+                        help="warn about files whose 'Last reviewed' date is older than this (default 183)")
+    parser.add_argument("--fail-on-stale", action="store_true", help="exit 1 when a file is stale")
+    args = parser.parse_args(argv)
     if yaml is None:
         print("note: PyYAML not installed, using a simple frontmatter parser", file=sys.stderr)
     check_rules()
@@ -207,10 +231,16 @@ def main():
     check_template_copies()
     check_settings()
     check_english_only()
+    stale = stale_reviews(KIT_DIR, dt.date.today(), args.stale_days)
     for message in errors:
         print(f"ERROR {message}")
-    print(f"validate: {len(errors)} error(s)")
-    return 1 if errors else 0
+    for path, date in stale:
+        if date == "no date":
+            print(f"WARNING {path}: no 'Last reviewed: YYYY-MM-DD' line")
+        else:
+            print(f"WARNING {path}: last reviewed {date}, more than {args.stale_days} days ago; check it against current versions")
+    print(f"validate: {len(errors)} error(s), {len(stale)} stale file(s)")
+    return 1 if errors or (stale and args.fail_on_stale) else 0
 
 
 if __name__ == "__main__":
