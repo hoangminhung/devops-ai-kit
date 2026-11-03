@@ -311,7 +311,9 @@ Chạy 2 skill này một lần cho mỗi repo, trong phiên Claude Code mở �
 - mỗi giá trị được đánh dấu ✅ (thấy trong repo hoặc cluster) hoặc ⚠️ (suy luận); Claude hỏi bạn xác nhận các mục ⚠️ theo từng vòng ngắn;
 - thêm `--recon <context>` thì nó có thể nhờ agent read-only `infra-recon` kiểm tra cluster thật (hỏi bạn trước);
 - repo đã có CLAUDE.md thì chỉ bổ sung phần còn thiếu và cho bạn xem diff; không bao giờ xóa phần bạn viết khi chưa hỏi;
-- nó đề nghị tạo luôn `PROGRESS.md`.
+- nó đề nghị tạo luôn `PROGRESS.md`;
+- nó kiểm tra **tên production** bằng `infra-scout/scripts/prod_names.py`: hook chặn production dựa trên tên (`prod`, `prd`, `production`, `live`), nên dự án có context production tên `k8s-hn-01` hay `default` sẽ không được bảo vệ. Claude báo cho bạn, đề xuất `DEVOPS_KIT_PROD_PATTERN` và đưa lệnh `./install.sh --env …` để bạn tự chạy; Claude cũng cảnh báo khi tên dev trông giống production;
+- convention chỉ có ở dạng văn xuôi (README, wiki: "không deploy thứ Sáu") được đề xuất thành dòng ngắn bằng lời của Claude, kèm nguồn; chỉ những dòng bạn xác nhận mới vào CLAUDE.md.
 
 Quan trọng nhất trong `CLAUDE.md` là bảng **Environment registry**: env nào ↔ context nào ↔ subscription nào ↔ ai được thay đổi. Rule cốt lõi bắt Claude đối chiếu bảng này trước khi chạm hạ tầng.
 
