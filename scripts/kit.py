@@ -7,7 +7,7 @@ settings.json. Everything it adds is recorded in a manifest so that a re-install
 (update) or an uninstall removes exactly what the kit added and nothing else.
 
 Usage:
-  kit.py install   [--dry-run] [--no-settings] [--lang en|vi] [--env KEY=VALUE ...]
+  kit.py install   [--dry-run] [--no-settings] [--lang en|vi] [--env KEY=VALUE ...] [--unset-env KEY ...]
   kit.py uninstall [--dry-run]
   kit.py check
 """
@@ -209,8 +209,32 @@ def add_settings(settings, fragment, env_pairs):
             sys.exit(f"ERROR: --env expects KEY=VALUE, got: {pair}")
         env = settings.setdefault("env", {})
         added["env"][key] = env.get(key)
-        env[key] = os.path.expanduser(value)
+        # `~/.kube/ai-config` is a path; a regex such as DEVOPS_KIT_PROD_PATTERN stays as written
+        env[key] = value if key.endswith("_PATTERN") else os.path.expanduser(value)
     return settings, added
+
+
+def merge_env(settings, previous_env, added_env, unset):
+    """The env vars this install owns: the earlier ones plus the new ones, minus `--unset-env`.
+
+    Values are {KEY: the user's value before the kit set it, or None}. A re-install with
+    `--env X=…` must not drop KUBECONFIG=…-ro from an earlier install: that would send Claude
+    back to the admin kubeconfig.
+    """
+    owned = dict(previous_env or {})
+    for key, original in added_env.items():
+        owned.setdefault(key, original)  # keep the value from before the FIRST install
+    for key in unset:
+        if key in owned:
+            original = owned.pop(key)
+            env = settings.setdefault("env", {})
+            if original is None:
+                env.pop(key, None)
+            else:
+                env[key] = original
+            if not env:
+                settings.pop("env", None)
+    return owned
 
 
 def release_warnings(kit_dir):
@@ -290,12 +314,10 @@ def install(args):
                 backup_root.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(SETTINGS, backup_root / "settings.json")
         previous = manifest.get("settings", {})
-        # Without --env on a re-install, keep the env vars an earlier install added.
-        replace_env = bool(args.env)
-        settings = remove_settings_additions(settings, previous, include_env=replace_env)
+        # A re-install keeps the env vars of earlier installs; --env adds or changes, --unset-env removes.
+        settings = remove_settings_additions(settings, previous, include_env=False)
         settings, added = add_settings(settings, settings_fragment(), args.env or [])
-        if not replace_env and previous.get("env"):
-            added["env"] = previous["env"]
+        added["env"] = merge_env(settings, previous.get("env"), added["env"], args.unset_env or [])
         ops.write_json(SETTINGS, settings)
         counts = {k: len(v) for k, v in added["permissions"].items()}
         print(f"settings: added permission rules {counts or '{}'}; hook added: {added['hook']}; env: {list(added['env']) or '[]'}")
@@ -413,7 +435,10 @@ def main():
     p_inst.add_argument("--lang", choices=LANGS,
                         help=f"output language for docs and reports (default {DEFAULT_LANG}; a re-install keeps the earlier choice)")
     p_inst.add_argument("--env", action="append", metavar="KEY=VALUE",
-                        help="add an env var to settings.json (e.g. KUBECONFIG=~/.kube/ai-config); repeatable")
+                        help="add or change an env var in settings.json (e.g. KUBECONFIG=~/.kube/ai-config); "
+                             "env vars of earlier installs are kept; repeatable")
+    p_inst.add_argument("--unset-env", action="append", metavar="KEY",
+                        help="remove an env var an earlier install added (restores your own value); repeatable")
     p_un = sub.add_parser("uninstall")
     p_un.add_argument("--dry-run", action="store_true")
     sub.add_parser("check")

@@ -209,8 +209,12 @@ cd ~/devops-ai-kit
 git fetch --tags && tag=$(git describe --tags --abbrev=0 origin/main) && git checkout "$tag"   # bản release mới nhất
 ./install.sh            # cập nhật: gỡ bản cũ của kit, cài bản mới, giữ nguyên --lang và env đã đặt trước đó
 ./install.sh --lang en  # đổi ngôn ngữ đầu ra
+./install.sh --env DEVOPS_KIT_PROD_PATTERN='…'   # thêm hoặc đổi một biến env; các biến khác (KUBECONFIG …) được giữ nguyên
+./install.sh --unset-env DEVOPS_KIT_DEV_PATTERN   # gỡ một biến env do kit thêm
 ./uninstall.sh          # gỡ toàn bộ file + mọi dòng kit đã thêm vào settings.json
 ```
+
+Thay đổi env chỉ có hiệu lực ở phiên Claude Code mới: hãy khởi động lại Claude Code sau khi cài.
 
 Khi gỡ cài: nếu bạn không sửa `settings.json` sau khi cài, file được trả về **đúng từng byte** như trước khi cài. Nếu bạn đã sửa, kit chỉ xóa những dòng của kit và giữ phần bạn sửa. Thư mục rỗng do kit tạo cũng được xóa.
 

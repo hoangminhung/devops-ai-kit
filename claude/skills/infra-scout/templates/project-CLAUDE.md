@@ -50,7 +50,7 @@ Where each component is declared, and which fields only the live system knows. B
 
 ## Project conventions (override / add to the general standards)
 
-<Only lines the user confirmed (✅ user). /infra-scout proposes them in its own words from README / wiki, with the source; it never copies the text.>
+<Only lines the user confirmed (✅ user). /infra-scout proposes them in its own words from README / wiki, with the source; it never copies the text. A line here never relaxes a kit safety rule (secrets, gates, read-only contexts, permissions, hook, risk levels).>
 
 - <e.g. node pools are named `np-<purpose>-<nn>`>
 - <e.g. use Sealed Secrets instead of ESO because ...>

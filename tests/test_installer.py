@@ -145,6 +145,26 @@ class Reinstall(InstallerTestCase):
         self.assertEqual(self.manifest()["lang"], "vi")
         self.assertEqual(self.settings()["env"]["KUBECONFIG"], str(self.home / ".kube" / "ai-config"))
 
+    def test_env_of_earlier_installs_is_kept(self):
+        """Following the advice `./install.sh --env DEVOPS_KIT_PROD_PATTERN=…` must not drop the -ro KUBECONFIG."""
+        self.kit("install", "--env", "KUBECONFIG=~/.kube/ai-config", "--env", "DEVOPS_KIT_DEV_PATTERN=^kind-")
+        self.kit("install", "--env", "DEVOPS_KIT_PROD_PATTERN=~(prod|hn)")
+        env = self.settings()["env"]
+        self.assertEqual(env["KUBECONFIG"], str(self.home / ".kube" / "ai-config"))
+        self.assertEqual(env["DEVOPS_KIT_DEV_PATTERN"], "^kind-")
+        self.assertEqual(env["DEVOPS_KIT_PROD_PATTERN"], "~(prod|hn)")  # a regex is not a path
+        self.kit("install", "--unset-env", "DEVOPS_KIT_DEV_PATTERN")
+        self.assertNotIn("DEVOPS_KIT_DEV_PATTERN", self.settings()["env"])
+        self.assertEqual(sorted(self.manifest()["settings"]["env"]), ["DEVOPS_KIT_PROD_PATTERN", "KUBECONFIG"])
+
+    def test_uninstall_after_several_env_installs_restores_the_users_values(self):
+        (self.claude / "settings.json").write_bytes(b'{"env": {"KUBECONFIG": "/home/me/own-config"}}\n')
+        self.kit("install", "--env", "KUBECONFIG=~/.kube/ai-config")
+        self.kit("install", "--env", "KUBECONFIG=~/.kube/other", "--env", "DEVOPS_KIT_BLOCK_PROD=0")
+        self.kit("uninstall")
+        self.assertEqual(json.loads((self.claude / "settings.json").read_text()),
+                         {"env": {"KUBECONFIG": "/home/me/own-config"}})
+
     def test_reinstall_can_change_language(self):
         self.kit("install", "--lang", "vi")
         self.kit("install", "--lang", "en")

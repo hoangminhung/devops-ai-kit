@@ -209,8 +209,12 @@ cd ~/devops-ai-kit
 git fetch --tags && tag=$(git describe --tags --abbrev=0 origin/main) && git checkout "$tag"   # the latest release
 ./install.sh            # update: remove the old kit files, install the new ones, keep the earlier --lang and env
 ./install.sh --lang vi  # change the output language
+./install.sh --env DEVOPS_KIT_PROD_PATTERN='…'   # add or change one env var; the others (KUBECONFIG …) are kept
+./install.sh --unset-env DEVOPS_KIT_DEV_PATTERN   # remove one env var the kit added
 ./uninstall.sh          # remove all kit files + every line the kit added to settings.json
 ```
+
+Env changes apply to new Claude Code sessions: restart Claude Code after an install.
 
 On uninstall: if you did not edit `settings.json` after install, the file goes back **byte for byte** to how it was before. If you did edit it, the kit removes only its own lines and keeps your changes. Empty folders the kit created are removed too.
 

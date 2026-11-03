@@ -111,7 +111,9 @@ class ScoutTakeover(unittest.TestCase):
         for words in ("Do not copy them", "in your own words", "Write only the lines the user confirms"):
             self.assertIn(words, rules)
         core = (KIT_DIR / "claude/rules/devops-kit/00-core.md").read_text(encoding="utf-8")
-        self.assertIn("that the user confirmed in the chat is the user's statement", core)
+        self.assertIn("confirmed line by line in the chat", core)
+        self.assertIn("Such a line never relaxes a kit rule", core)
+        self.assertIn("a confirmed line never relaxes a kit rule", rules)
 
 
 class Slicing(unittest.TestCase):

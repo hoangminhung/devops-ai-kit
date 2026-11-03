@@ -11,8 +11,8 @@ from the environment (the kit puts it there through settings.json), or the
 hook's default. It changes nothing.
 
 Usage:
-  prod_names.py NAME [NAME ...]                    # which names count as production now
-  prod_names.py --pattern REGEX NAME [NAME ...]    # try a new pattern before you install it
+  prod_names.py -- NAME [NAME ...]                    # which names count as production now
+  prod_names.py --pattern REGEX -- NAME [NAME ...]    # try a new pattern before you install it
 Exit code: 0, or 2 when the hook or the pattern cannot be loaded.
 """
 import argparse
@@ -43,8 +43,12 @@ def main():
     except (OSError, re.error, AttributeError) as exc:
         print(f"error: cannot load the pattern: {exc}", file=sys.stderr)
         return 2
-    source = "--pattern" if args.pattern else (
-        "DEVOPS_KIT_PROD_PATTERN" if os.environ.get("DEVOPS_KIT_PROD_PATTERN") else "the hook's default")
+    if args.pattern:
+        source = "--pattern"
+    elif "DEVOPS_KIT_PROD_PATTERN" in os.environ:
+        source = "DEVOPS_KIT_PROD_PATTERN" + ("; empty, so every name matches" if not regex.pattern else "")
+    else:
+        source = "the hook's default"
     print(f"pattern ({source}): {regex.pattern}")
     width = max(len(n) for n in args.names)
     for name in args.names:
