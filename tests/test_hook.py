@@ -642,6 +642,81 @@ class GitPushTargets(HookTestCase):
         self.assertEqual(self.push("git push deploy feat/y"), "ask")
 
 
+class CloudReads(HookTestCase):
+    """Read commands of cloud CLIs and Argo CD run without a prompt; the ones that print secrets are denied."""
+
+    SECRET_READS = [
+        "az storage account keys list -n st -g rg",
+        "az --subscription s cosmosdb keys list -n db -g rg",
+        "az redis list-keys -n r -g rg",
+        "az webapp config appsettings list -n app -g rg",
+        "az functionapp config appsettings list -n f -g rg",
+        "az webapp config connection-string list -n app -g rg",
+        "az webapp deployment list-publishing-profiles -n app -g rg",
+        "az storage account show-connection-string -n st",
+        "az acr credential show -n reg",
+        "az account get-access-token",
+        "az storage container generate-sas -n c --account-name st",
+        "az search admin-key show --service-name s -g rg",
+        "az eventgrid topic key list -n t -g rg",
+        "az containerapp secret list -n app -g rg --show-values",
+        "az containerapp secret show -n app -g rg --secret-name db",
+        "az staticwebapp secrets list -n web",
+        "az iot hub connection-string show -n hub",
+        "az keyvault secret show --vault-name v -n db",
+        "az aks get-credentials -n aks -g rg --file -",
+        "aws ecr get-login-password",
+        "aws --profile p sts assume-role --role-arn arn:x --role-session-name s",
+        "aws sts get-session-token",
+        "aws ssm get-parameter --name /db/pw --with-decryption",
+        "aws ssm get-parameters-by-path --path /app --with-decryption",
+        "aws kms decrypt --ciphertext-blob fileb://x",
+        "aws rds generate-db-auth-token --hostname h --port 5432 --username u",
+        "aws eks get-token --cluster-name c",
+        "aws ec2 get-password-data --instance-id i-1",
+        "aws configure get aws_secret_access_key",
+        "aws configure export-credentials",
+        "gcloud auth print-access-token",
+        "gcloud --project p auth application-default print-access-token",
+        "gcloud kms decrypt --key k --ciphertext-file c --plaintext-file -",
+        "gcloud secrets versions access latest --secret db",
+    ]
+    PLAIN_READS = [
+        "az aks list -o table", "az --subscription s aks show -n aks -g rg", "az keyvault secret list --vault-name v",
+        "az storage account list", "az resource list -g rg", "az network vnet show -n v -g rg", "az version",
+        "aws ec2 describe-instances --region eu-west-1", "aws --profile p eks describe-cluster --name c",
+        "aws rds describe-db-instances", "aws secretsmanager list-secrets", "aws iam list-roles",
+        "aws sts get-caller-identity", "aws configure list",
+        "gcloud container clusters list", "gcloud --project p sql instances describe db", "gcloud config list",
+        "argocd version --short", "argocd app list", "argocd app get shop", "argocd app resources shop --orphaned",
+        "argocd appset list", "argocd proj get default", "argocd cluster list", "argocd repo list",
+    ]
+
+    def test_secret_reads_are_denied(self):
+        for command in self.SECRET_READS:
+            with self.subTest(command=command):
+                self.assertEqual(self.decision(command)[0], "deny")
+
+    def test_plain_reads_run_without_a_prompt(self):
+        deny, ask, allow = settings_rules("deny"), settings_rules("ask"), settings_rules("allow")
+        for command in self.PLAIN_READS:
+            with self.subTest(command=command):
+                self.assertIsNone(self.decision(command)[0])  # the hook stays silent
+                self.assertFalse(any(rule.match(command) for rule in deny + ask))
+                self.assertTrue(any(rule.match(command) for rule in allow))
+
+    def test_changes_still_ask(self):
+        for command in ("az aks update -n aks -g rg --tier standard", "aws ec2 terminate-instances --instance-ids i-1",
+                        "gcloud container clusters delete c", "argocd app sync shop",
+                        "az group delete --name list-foo"):  # matches `az * list*`, but the hook asks
+            with self.subTest(command=command):
+                self.assertEqual(self.decision(command)[0], "ask")
+
+    def test_argocd_diff_is_not_auto_allowed(self):
+        # Argo CD 3.2.0-3.2.11, 3.3.9, 3.4.1 can show Secret values in diffs (CVE-2026-45737): recon checks first
+        self.assertFalse(any(rule.match("argocd app diff shop") for rule in settings_rules("allow")))
+
+
 class MakeTargets(HookTestCase):
     def test_mutating_target_shows_variables_and_production(self):
         decision, reason = self.decision("make apply e=prod")

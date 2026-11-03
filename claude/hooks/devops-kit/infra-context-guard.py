@@ -147,6 +147,30 @@ AWS_MUTATING_PREFIX = (
     "replace", "promote", "failover", "tag", "untag",
 )
 AWS_S3_MUTATING = {"rm", "mv", "sync", "mb", "rb"}
+# Read commands that print a secret, a key or a token. The settings allow `az * list*` / `az * show*`,
+# `aws * describe-*` / `aws * list-*`, `gcloud * list*` / `gcloud * describe*`; these must stay denied.
+AZ_SECRET_READS = [
+    ("keyvault", "secret", "show"), ("keyvault", "secret", "download"), ("keys", "list"), ("key", "list"),
+    ("list-keys",), ("keys", "show"), ("show-connection-string",), ("connection-string", "list"),
+    ("credential", "show"), ("get-access-token",), ("generate-sas",), ("list-publishing-profiles",),
+    ("list-publishing-credentials",), ("admin-key", "show"), ("query-key", "list"), ("appsettings", "list"),
+    ("list-secrets",), ("keyvault", "key", "download"), ("keyvault", "certificate", "download"),
+    ("secrets", "list"), ("list-key",), ("connection-string", "show"), ("containerapp", "secret", "show"),
+]
+AWS_SECRET_READS = [
+    ("secretsmanager", "get-secret-value"), ("secretsmanager", "batch-get-secret-value"),
+    ("ecr", "get-login-password"), ("ecr", "get-authorization-token"), ("ecr-public", "get-login-password"),
+    ("ecr-public", "get-authorization-token"), ("codeartifact", "get-authorization-token"),
+    ("sts", "get-session-token"), ("sts", "assume-role"), ("sts", "assume-role-with-saml"),
+    ("sts", "assume-role-with-web-identity"), ("sts", "get-federation-token"), ("sso", "get-role-credentials"),
+    ("rds", "generate-db-auth-token"), ("eks", "get-token"), ("kms", "decrypt"), ("ec2", "get-password-data"),
+    ("lightsail", "get-instance-access-details"), ("cognito-identity", "get-credentials-for-identity"),
+    ("configure", "export-credentials"),
+]
+GCLOUD_SECRET_READS = [
+    ("secrets", "versions", "access"), ("auth", "print-access-token"), ("auth", "print-identity-token"),
+    ("auth", "application-default", "print-access-token"), ("kms", "decrypt"), ("sql", "generate-login-token"),
+]
 GCLOUD_MUTATING = {
     "create", "delete", "update", "set", "add-iam-policy-binding",
     "remove-iam-policy-binding", "deploy", "resize", "start", "stop",
@@ -738,17 +762,30 @@ def forbidden(base, args):
             return f"{base} {pos[0]}{' -destroy' if pos[0] == 'apply' else ''}"
         return terraform_secret_read(base, args)
     elif base == "az":
-        pos, _ = parse_args(args, {"--subscription", "--vault-name", "-n", "--name", "--id", "-f", "--file", "-o", "--output", "--query"})
-        if subsequence(pos, ["keyvault", "secret", "show"]) or subsequence(pos, ["keyvault", "secret", "download"]):
-            return "az keyvault secret show/download (prints a secret value)"
+        pos, flags = parse_args(args, {"--subscription", "--vault-name", "-n", "--name", "--id", "-f", "--file",
+                                       "-o", "--output", "--query", "-g", "--resource-group"})
+        hit = next((" ".join(w) for w in AZ_SECRET_READS if subsequence(pos, list(w))), None)
+        if hit:
+            return f"az … {hit} (prints keys, passwords or tokens)"
+        if "--show-values" in args:
+            return "az … --show-values (prints secret values)"
+        if subsequence(pos, ["aks", "get-credentials"]) and flag(flags, "-f", "--file") == "-":
+            return "az aks get-credentials --file - (prints the kubeconfig with its credentials)"
     elif base == "aws":
-        pos, _ = parse_args(args, {"--profile", "--region", "--output", "--query", "--secret-id", "--version-id", "--version-stage"})
-        if subsequence(pos, ["secretsmanager", "get-secret-value"]):
-            return "aws secretsmanager get-secret-value (prints a secret value)"
+        pos, _ = parse_args(args, {"--profile", "--region", "--output", "--query", "--secret-id", "--version-id",
+                                   "--version-stage", "--name", "--names", "--path"})
+        hit = next((" ".join(w) for w in AWS_SECRET_READS if subsequence(pos, list(w))), None)
+        if hit:
+            return f"aws {hit} (prints a secret, a password or credentials)"
+        if pos[:2] == ["configure", "get"] and any(re.search(r"key|secret|token", p, re.I) for p in pos[2:]):
+            return "aws configure get <key / secret / token> (prints a credential)"
+        if pos[:1] == ["ssm"] and pos[1:2] and pos[1].startswith("get-parameter") and "--with-decryption" in args:
+            return "aws ssm get-parameter… --with-decryption (prints SecureString values)"
     elif base == "gcloud":
-        pos, _ = parse_args(args, {"--project", "--secret", "--format", "--out-file"})
-        if subsequence(pos, ["secrets", "versions", "access"]):
-            return "gcloud secrets versions access (prints a secret value)"
+        pos, _ = parse_args(args, {"--project", "--secret", "--format", "--out-file", "--region", "--zone"})
+        hit = next((" ".join(w) for w in GCLOUD_SECRET_READS if subsequence(pos, list(w))), None)
+        if hit:
+            return f"gcloud {hit} (prints a secret or a token)"
     return None
 
 
