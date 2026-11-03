@@ -28,7 +28,8 @@ MAX_LINE = 2000  # longer lines are not YAML or HCL anyone writes by hand
 
 # Strict patterns: a value that does not match is shown as <not shown>.
 K8S_NAME = re.compile(r"[a-z0-9](?:[-a-z0-9.]{0,61}[a-z0-9])?")
-KIND = re.compile(r"[A-Z][A-Za-z0-9]{0,39}")
+# A kind is CamelCase: at least one lower-case letter and no long upper-case run (rejects `AKIAIOSFODNN7EXAMPLE`).
+KIND = re.compile(r"(?=[A-Za-z0-9]*[a-z])(?![A-Za-z0-9]*[A-Z0-9]{7})[A-Z][A-Za-z0-9]{0,39}")
 GROUP = re.compile(r"[a-z0-9](?:[-a-z0-9.]{0,99})?")
 POINTER = re.compile(r"/[A-Za-z0-9_.~/-]{0,120}")
 MANAGER = re.compile(r"[A-Za-z0-9](?:[-A-Za-z0-9.:_]{0,61}[A-Za-z0-9])?")
