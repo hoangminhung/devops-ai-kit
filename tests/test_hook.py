@@ -688,6 +688,7 @@ class CloudReads(HookTestCase):
         "az cosmosdb list-read-only-keys -n db -g rg", "az webapp auth show -n app -g rg",
         "az webapp connection list-configuration -n app -g rg", "az iot dps enrollment show --show-keys",
         "az acr login -n reg --expose-token", "az webapp config backup list -n app -g rg",
+        "az containerapp show -n app -g rg --show-secrets",
         "aws cognito-idp describe-user-pool-client --user-pool-id p --client-id c",
         "aws ec2 describe-vpn-connections", "aws appsync list-api-keys --api-id a",
         "gcloud iam oauth-clients credentials list --oauth-client c --location global",
@@ -720,7 +721,10 @@ class CloudReads(HookTestCase):
                 self.assertTrue(any(rule.match(command) for rule in allow))
 
     def test_gke_cluster_json_asks(self):
-        self.assertEqual(self.decision("gcloud container clusters list --format=json")[0], "ask")
+        for command in ("gcloud container clusters list --format=json", "gcloud container clusters list --format json",
+                        "gcloud container clusters describe c --format=table(name,masterAuth.password)"):
+            with self.subTest(command=command):
+                self.assertEqual(self.decision(command)[0], "ask")
         self.assertIsNone(self.decision("gcloud container clusters list")[0])
 
     def test_harmless_lookalikes_are_not_denied(self):

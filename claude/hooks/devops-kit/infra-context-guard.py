@@ -782,8 +782,8 @@ def forbidden(base, args):
                     if subsequence(pos, list(w)) and AZ_SECRET_EXCEPT.get(w) not in pos[:2]), None)
         if hit:
             return f"az … {hit} (prints keys, passwords or tokens)"
-        if any(a.startswith(("--show-value", "--show-keys")) for a in args) or "--expose-token" in args:
-            return "az … --show-values / --show-keys / --expose-token (prints secret values or a token)"
+        if any(a.startswith(("--show-value", "--show-keys", "--show-secret")) for a in args) or "--expose-token" in args:
+            return "az … --show-values / --show-secrets / --show-keys / --expose-token (prints secret values or a token)"
         if subsequence(pos, ["aks", "get-credentials"]) and flag(flags, "-f", "--file") == "-":
             return "az aks get-credentials --file - (prints the kubeconfig with its credentials)"
     elif base == "aws":
@@ -1209,9 +1209,9 @@ def tf_cli_args(args, env):
 def runs_program(base, args, env):
     """Allowed read commands that can run a program, or show a key in some setups: ask instead of allow."""
     if base == "gcloud" and subsequence([a for a in args if not a.startswith("-")], ["container", "clusters"]) and any(
-            re.search(r"json|yaml|value|flattened", a) for a in args if a.startswith("--format")):
-        return ("gcloud container clusters --format json/yaml: old clusters with client certificates "
-                "show masterAuth.clientKey", [], False)
+            a.startswith("--format") for a in args):
+        return ("gcloud container clusters --format …: old clusters with basic auth or client certificates "
+                "show masterAuth (password, clientKey)", [], False)
     if base in ("kubectl", "oc") and "KUBECTL_EXTERNAL_DIFF" in env:
         return ("KUBECTL_EXTERNAL_DIFF: `kubectl diff` runs this program", [], False)
     if base == "helm":
