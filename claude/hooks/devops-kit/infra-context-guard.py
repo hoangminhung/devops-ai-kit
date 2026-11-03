@@ -523,6 +523,8 @@ def terraform_secret_read(base, args):
         if not tok.startswith("-"):
             pos.append(tok)
         i += 1
+    if tf_flag_on(args, "show-sensitive"):  # any subcommand: also `terragrunt run-all plan`, which the slice below drops
+        return " ".join([base, *pos[:2], "-show-sensitive (prints sensitive values)"])
     if base == "terragrunt":
         # `terragrunt --log-level info run-all output -json`: flag values come before the subcommand
         start = next((n for n, p in enumerate(pos) if p in ("output", "show", "state", "console")), None)
@@ -530,8 +532,6 @@ def terraform_secret_read(base, args):
     if not pos:
         return None
     sub = pos[0]
-    if tf_flag_on(args, "show-sensitive"):
-        return f"{base} {sub} -show-sensitive (prints sensitive values)"
     if sub == "console":
         return f"{base} console (nonsensitive() prints any sensitive value)"
     if sub == "state" and pos[1:2] == ["pull"]:

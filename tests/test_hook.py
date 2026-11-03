@@ -271,6 +271,10 @@ class TerraformSecretReads(HookTestCase):
         "tofu state show -show-sensitive aws_db_instance.db",
         "terragrunt output -json",
         "terragrunt run-all output -json",
+        "terragrunt plan -show-sensitive",
+        "terragrunt run-all plan -show-sensitive",
+        "terragrunt run -- plan -show-sensitive",
+        "TF_CLI_ARGS_plan=-show-sensitive terragrunt plan",
         # state files read through the shell
         "cat terraform.tfstate",
         "jq . .terraform/terraform.tfstate",
