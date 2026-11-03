@@ -275,6 +275,8 @@ class TerraformSecretReads(HookTestCase):
         "terragrunt run-all plan -show-sensitive",
         "terragrunt run -- plan -show-sensitive",
         "TF_CLI_ARGS_plan=-show-sensitive terragrunt plan",
+        "TF_CLI_ARGS_plan=-show-sensitive terragrunt run-all plan",
+        "TF_CLI_ARGS_plan=-show-sensitive terragrunt --log-level info plan",
         # state files read through the shell
         "cat terraform.tfstate",
         "jq . .terraform/terraform.tfstate",
