@@ -523,6 +523,8 @@ def terraform_secret_read(base, args):
         if not tok.startswith("-"):
             pos.append(tok)
         i += 1
+    if tf_flag_on(args, "show-sensitive"):  # any subcommand: also `terragrunt run-all plan`, which the slice below drops
+        return " ".join(filter(None, [base, tf_subcommand(args), "-show-sensitive (prints sensitive values)"]))
     if base == "terragrunt":
         # `terragrunt --log-level info run-all output -json`: flag values come before the subcommand
         start = next((n for n, p in enumerate(pos) if p in ("output", "show", "state", "console")), None)
@@ -530,8 +532,6 @@ def terraform_secret_read(base, args):
     if not pos:
         return None
     sub = pos[0]
-    if tf_flag_on(args, "show-sensitive"):
-        return f"{base} {sub} -show-sensitive (prints sensitive values)"
     if sub == "console":
         return f"{base} console (nonsensitive() prints any sensitive value)"
     if sub == "state" and pos[1:2] == ["pull"]:
@@ -1194,10 +1194,20 @@ def analyse_find(args, cwd, depth):
     return hits
 
 
+TF_SUBCOMMANDS = {"init", "validate", "plan", "apply", "destroy", "console", "fmt", "get", "graph", "import",
+                  "output", "providers", "refresh", "show", "state", "taint", "test", "untaint", "workspace"}
+
+
+def tf_subcommand(args):
+    """The terraform subcommand: the first positional for terraform, the first known one after
+    `terragrunt run-all|run --` and flag values such as `--log-level info`."""
+    pos = [t for t in args if not t.startswith("-")]
+    return next((p for p in pos if p in TF_SUBCOMMANDS), pos[0] if pos else "")
+
+
 def tf_cli_args(args, env):
     """Words that TF_CLI_ARGS / TF_CLI_ARGS_<command> add to this command."""
-    pos = [t for t in args if not t.startswith("-")]
-    sub = pos[0] if pos else ""
+    sub = tf_subcommand(args)
     merged = dict(os.environ, **env)
     extra = []
     for key in ("TF_CLI_ARGS", f"TF_CLI_ARGS_{sub}"):
