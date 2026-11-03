@@ -680,14 +680,28 @@ class CloudReads(HookTestCase):
         "gcloud --project p auth application-default print-access-token",
         "gcloud kms decrypt --key k --ciphertext-file c --plaintext-file -",
         "gcloud secrets versions access latest --secret db",
+        # found by the independent review
+        "az appconfig credential list -n c -g rg", "az webpubsub key show -n w -g rg",
+        "az apim nv show-secret --service-name s -g rg --named-value-id n", "az iot hub policy list --hub-name h",
+        "az webapp deployment container show-cd-url -n app -g rg",
+        "az --subscription s keyvault secret show-deleted --vault-name v -n db",
+        "az cosmosdb list-read-only-keys -n db -g rg", "az webapp auth show -n app -g rg",
+        "az webapp connection list-configuration -n app -g rg", "az iot dps enrollment show --show-keys",
+        "az acr login -n reg --expose-token", "az webapp config backup list -n app -g rg",
+        "aws cognito-idp describe-user-pool-client --user-pool-id p --client-id c",
+        "aws ec2 describe-vpn-connections", "aws appsync list-api-keys --api-id a",
+        "gcloud iam oauth-clients credentials list --oauth-client c --location global",
     ]
+    NOT_SECRETS = ["az keyvault key show --vault-name v -n k", "az ad sp credential list --id x",
+                   "az postgres flexible-server backup list -n db -g rg"]
     PLAIN_READS = [
-        "az aks list -o table", "az --subscription s aks show -n aks -g rg", "az keyvault secret list --vault-name v",
+        "az aks list -o table", "az aks show -n aks -g rg --subscription s", "az keyvault secret list --vault-name v",
         "az storage account list", "az resource list -g rg", "az network vnet show -n v -g rg", "az version",
-        "aws ec2 describe-instances --region eu-west-1", "aws --profile p eks describe-cluster --name c",
+        "az account show", "az aks nodepool list --cluster-name aks -g rg",
+        "aws ec2 describe-instances --region eu-west-1", "aws eks describe-cluster --name c --profile p",
         "aws rds describe-db-instances", "aws secretsmanager list-secrets", "aws iam list-roles",
         "aws sts get-caller-identity", "aws configure list",
-        "gcloud container clusters list", "gcloud --project p sql instances describe db", "gcloud config list",
+        "gcloud container clusters list", "gcloud sql instances describe db --project p", "gcloud config list",
         "argocd version --short", "argocd app list", "argocd app get shop", "argocd app resources shop --orphaned",
         "argocd appset list", "argocd proj get default", "argocd cluster list", "argocd repo list",
     ]
@@ -705,16 +719,38 @@ class CloudReads(HookTestCase):
                 self.assertFalse(any(rule.match(command) for rule in deny + ask))
                 self.assertTrue(any(rule.match(command) for rule in allow))
 
-    def test_changes_still_ask(self):
+    def test_gke_cluster_json_asks(self):
+        self.assertEqual(self.decision("gcloud container clusters list --format=json")[0], "ask")
+        self.assertIsNone(self.decision("gcloud container clusters list")[0])
+
+    def test_harmless_lookalikes_are_not_denied(self):
+        for command in self.NOT_SECRETS:
+            with self.subTest(command=command):
+                self.assertNotEqual(self.decision(command)[0], "deny")
+
+    def test_changes_and_exec_still_ask(self):
+        allow = settings_rules("allow")
         for command in ("az aks update -n aks -g rg --tier standard", "aws ec2 terminate-instances --instance-ids i-1",
                         "gcloud container clusters delete c", "argocd app sync shop",
-                        "az group delete --name list-foo"):  # matches `az * list*`, but the hook asks
+                        # found by the review: names with `show` / `list` in them, and exec / rotate verbs
+                        "az containerapp exec -n showcase -g rg", "az ssh vm -n showbox -g rg",
+                        "aws ssm send-command --comment list-files --document-name AWS-RunShellScript",
+                        "aws lambda invoke --function-name describe-orders out.json",
+                        "az storage account keys renew -g listings -n st --key primary",
+                        "az cosmosdb keys regenerate -n listings -g rg --key-kind primary",
+                        "gcloud compute ssh vm-1"):
             with self.subTest(command=command):
                 self.assertEqual(self.decision(command)[0], "ask")
+                self.assertFalse(any(rule.match(command) for rule in allow))
 
-    def test_argocd_diff_is_not_auto_allowed(self):
-        # Argo CD 3.2.0-3.2.11, 3.3.9, 3.4.1 can show Secret values in diffs (CVE-2026-45737): recon checks first
-        self.assertFalse(any(rule.match("argocd app diff shop") for rule in settings_rules("allow")))
+    def test_allow_rules_are_anchored(self):
+        """A cloud allow rule may have `*` only in its last word: `az * show*` matched `-n showcase` anywhere."""
+        settings = json.loads((KIT_DIR / "claude" / "settings.devops-kit.json").read_text(encoding="utf-8"))
+        for rule in settings["permissions"]["allow"]:
+            words = rule[len("Bash("):-1].split()
+            if words[0] in ("az", "aws", "gcloud", "argocd"):
+                with self.subTest(rule=rule):
+                    self.assertFalse(any("*" in word for word in words[:-1]))
 
 
 class MakeTargets(HookTestCase):

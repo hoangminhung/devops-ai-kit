@@ -138,17 +138,18 @@ AZ_MUTATING = {
     "upgrade", "add", "remove", "assign", "purge", "deploy", "import",
     "rotate", "reset", "attach", "detach", "enable", "disable", "install",
     "uninstall", "get-credentials", "invoke", "restore", "failover",
+    "exec", "ssh", "login", "renew", "regenerate", "run-command", "connect",
 }
 AWS_MUTATING_PREFIX = (
     "create", "delete", "put", "update", "modify", "terminate", "run",
     "start", "stop", "reboot", "attach", "detach", "associate",
     "disassociate", "authorize", "revoke", "register", "deregister",
     "restore", "import", "reset", "set", "enable", "disable", "execute",
-    "replace", "promote", "failover", "tag", "untag",
+    "replace", "promote", "failover", "tag", "untag", "send", "invoke", "renew", "rotate",
 )
 AWS_S3_MUTATING = {"rm", "mv", "sync", "mb", "rb"}
-# Read commands that print a secret, a key or a token. The settings allow `az * list*` / `az * show*`,
-# `aws * describe-*` / `aws * list-*`, `gcloud * list*` / `gcloud * describe*`; these must stay denied.
+# Read commands that print a secret, a key or a token. The settings allow only a fixed list of plain reads
+# (`az aks show *`, `aws eks describe-cluster*` …); these stay denied even when the user approves a prompt.
 AZ_SECRET_READS = [
     ("keyvault", "secret", "show"), ("keyvault", "secret", "download"), ("keys", "list"), ("key", "list"),
     ("list-keys",), ("keys", "show"), ("show-connection-string",), ("connection-string", "list"),
@@ -156,7 +157,15 @@ AZ_SECRET_READS = [
     ("list-publishing-credentials",), ("admin-key", "show"), ("query-key", "list"), ("appsettings", "list"),
     ("list-secrets",), ("keyvault", "key", "download"), ("keyvault", "certificate", "download"),
     ("secrets", "list"), ("list-key",), ("connection-string", "show"), ("containerapp", "secret", "show"),
+    # found by the independent review (official CLI reference says they return keys or secrets)
+    ("credential", "list"), ("key", "show"), ("show-secret",), ("iot", "hub", "policy"), ("show-cd-url",),
+    ("secret", "show-deleted"), ("list-read-only-keys",), ("list-connection-strings",), ("auth", "show"),
+    ("list-configuration",), ("device-identity", "show"), ("test-endpoint", "list"), ("list-auth-key",),
+    ("config", "backup", "list"),
 ]
+# Words that make a match above harmless: a Key Vault key shows only its public part, `az ad … credential list`
+# shows key ids and dates.
+AZ_SECRET_EXCEPT = {("key", "show"): "keyvault", ("credential", "list"): "ad"}
 AWS_SECRET_READS = [
     ("secretsmanager", "get-secret-value"), ("secretsmanager", "batch-get-secret-value"),
     ("ecr", "get-login-password"), ("ecr", "get-authorization-token"), ("ecr-public", "get-login-password"),
@@ -166,15 +175,20 @@ AWS_SECRET_READS = [
     ("rds", "generate-db-auth-token"), ("eks", "get-token"), ("kms", "decrypt"), ("ec2", "get-password-data"),
     ("lightsail", "get-instance-access-details"), ("cognito-identity", "get-credentials-for-identity"),
     ("configure", "export-credentials"),
+    ("cognito-idp", "describe-user-pool-client"), ("cognito-idp", "describe-identity-provider"),
+    ("ec2", "describe-vpn-connections"), ("directconnect", "describe-virtual-interfaces"),
+    ("amplify", "list-apps"), ("amplify", "list-branches"), ("amplify", "get-app"), ("amplify", "get-branch"),
+    ("appsync", "list-api-keys"), ("mediapackage", "list-channels"),
 ]
 GCLOUD_SECRET_READS = [
     ("secrets", "versions", "access"), ("auth", "print-access-token"), ("auth", "print-identity-token"),
     ("auth", "application-default", "print-access-token"), ("kms", "decrypt"), ("sql", "generate-login-token"),
+    ("oauth-clients", "credentials"),
 ]
 GCLOUD_MUTATING = {
     "create", "delete", "update", "set", "add-iam-policy-binding",
     "remove-iam-policy-binding", "deploy", "resize", "start", "stop",
-    "reset", "patch", "import", "restore", "failover", "promote-replica",
+    "reset", "patch", "import", "restore", "failover", "promote-replica", "ssh", "scp",
 }
 ARGOCD_MUTATING = {"sync", "delete", "set", "rollback", "patch", "create", "rm", "terminate-op", "run"}
 VELERO_MUTATING = {"create", "delete"}
@@ -764,11 +778,12 @@ def forbidden(base, args):
     elif base == "az":
         pos, flags = parse_args(args, {"--subscription", "--vault-name", "-n", "--name", "--id", "-f", "--file",
                                        "-o", "--output", "--query", "-g", "--resource-group"})
-        hit = next((" ".join(w) for w in AZ_SECRET_READS if subsequence(pos, list(w))), None)
+        hit = next((" ".join(w) for w in AZ_SECRET_READS
+                    if subsequence(pos, list(w)) and AZ_SECRET_EXCEPT.get(w) not in pos[:2]), None)
         if hit:
             return f"az … {hit} (prints keys, passwords or tokens)"
-        if "--show-values" in args:
-            return "az … --show-values (prints secret values)"
+        if any(a.startswith(("--show-value", "--show-keys")) for a in args) or "--expose-token" in args:
+            return "az … --show-values / --show-keys / --expose-token (prints secret values or a token)"
         if subsequence(pos, ["aks", "get-credentials"]) and flag(flags, "-f", "--file") == "-":
             return "az aks get-credentials --file - (prints the kubeconfig with its credentials)"
     elif base == "aws":
@@ -1192,7 +1207,11 @@ def tf_cli_args(args, env):
 
 
 def runs_program(base, args, env):
-    """Allowed read commands that can be told to run any program: ask instead of allow."""
+    """Allowed read commands that can run a program, or show a key in some setups: ask instead of allow."""
+    if base == "gcloud" and subsequence([a for a in args if not a.startswith("-")], ["container", "clusters"]) and any(
+            re.search(r"json|yaml|value|flattened", a) for a in args if a.startswith("--format")):
+        return ("gcloud container clusters --format json/yaml: old clusters with client certificates "
+                "show masterAuth.clientKey", [], False)
     if base in ("kubectl", "oc") and "KUBECTL_EXTERNAL_DIFF" in env:
         return ("KUBECTL_EXTERNAL_DIFF: `kubectl diff` runs this program", [], False)
     if base == "helm":
