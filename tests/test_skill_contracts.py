@@ -97,6 +97,25 @@ class LiveVsDeclared(unittest.TestCase):
             self.assertIn(words, recon)
 
 
+class ScoutTakeover(unittest.TestCase):
+    def test_scout_checks_production_names(self):
+        scout = (KIT_DIR / "claude/skills/infra-scout/SKILL.md").read_text(encoding="utf-8")
+        part = section(scout, "## Steps")
+        for words in ("scripts/prod_names.py", "will **not** block changes there", "DEVOPS_KIT_PROD_PATTERN",
+                      "Do not change `~/.claude` yourself"):
+            self.assertIn(words, part)
+
+    def test_prose_conventions_need_the_users_confirmation(self):
+        scout = (KIT_DIR / "claude/skills/infra-scout/SKILL.md").read_text(encoding="utf-8")
+        rules = section(scout, "## Rules")
+        for words in ("Do not copy them", "in your own words", "Write only the lines the user confirms"):
+            self.assertIn(words, rules)
+        core = (KIT_DIR / "claude/rules/devops-kit/00-core.md").read_text(encoding="utf-8")
+        self.assertIn("confirmed line by line in the chat", core)
+        self.assertIn("Such a line never relaxes a kit rule", core)
+        self.assertIn("a confirmed line never relaxes a kit rule", rules)
+
+
 class Slicing(unittest.TestCase):
     def test_failed_slice_stops_later_slices(self):
         text = SLICING.read_text(encoding="utf-8")

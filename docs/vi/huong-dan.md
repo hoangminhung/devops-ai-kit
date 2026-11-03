@@ -209,8 +209,12 @@ cd ~/devops-ai-kit
 git fetch --tags && tag=$(git describe --tags --abbrev=0 origin/main) && git checkout "$tag"   # bản release mới nhất
 ./install.sh            # cập nhật: gỡ bản cũ của kit, cài bản mới, giữ nguyên --lang và env đã đặt trước đó
 ./install.sh --lang en  # đổi ngôn ngữ đầu ra
+./install.sh --env DEVOPS_KIT_PROD_PATTERN='…'   # thêm hoặc đổi một biến env; các biến khác (KUBECONFIG …) được giữ nguyên
+./install.sh --unset-env DEVOPS_KIT_DEV_PATTERN   # gỡ một biến env do kit thêm
 ./uninstall.sh          # gỡ toàn bộ file + mọi dòng kit đã thêm vào settings.json
 ```
+
+Thay đổi env chỉ có hiệu lực ở phiên Claude Code mới: hãy khởi động lại Claude Code sau khi cài.
 
 Khi gỡ cài: nếu bạn không sửa `settings.json` sau khi cài, file được trả về **đúng từng byte** như trước khi cài. Nếu bạn đã sửa, kit chỉ xóa những dòng của kit và giữ phần bạn sửa. Thư mục rỗng do kit tạo cũng được xóa.
 
@@ -311,7 +315,9 @@ Chạy 2 skill này một lần cho mỗi repo, trong phiên Claude Code mở �
 - mỗi giá trị được đánh dấu ✅ (thấy trong repo hoặc cluster) hoặc ⚠️ (suy luận); Claude hỏi bạn xác nhận các mục ⚠️ theo từng vòng ngắn;
 - thêm `--recon <context>` thì nó có thể nhờ agent read-only `infra-recon` kiểm tra cluster thật (hỏi bạn trước);
 - repo đã có CLAUDE.md thì chỉ bổ sung phần còn thiếu và cho bạn xem diff; không bao giờ xóa phần bạn viết khi chưa hỏi;
-- nó đề nghị tạo luôn `PROGRESS.md`.
+- nó đề nghị tạo luôn `PROGRESS.md`;
+- nó kiểm tra **tên production** bằng `infra-scout/scripts/prod_names.py`: hook chặn production dựa trên tên (`prod`, `prd`, `production`, `live`), nên dự án có context production tên `k8s-hn-01` hay `default` sẽ không được bảo vệ. Claude báo cho bạn, đề xuất `DEVOPS_KIT_PROD_PATTERN` và đưa lệnh `./install.sh --env …` để bạn tự chạy; Claude cũng cảnh báo khi tên dev trông giống production;
+- convention chỉ có ở dạng văn xuôi (README, wiki: "không deploy thứ Sáu") được đề xuất thành dòng ngắn bằng lời của Claude, kèm nguồn; chỉ những dòng bạn xác nhận mới vào CLAUDE.md.
 
 Quan trọng nhất trong `CLAUDE.md` là bảng **Environment registry**: env nào ↔ context nào ↔ subscription nào ↔ ai được thay đổi. Rule cốt lõi bắt Claude đối chiếu bảng này trước khi chạm hạ tầng.
 

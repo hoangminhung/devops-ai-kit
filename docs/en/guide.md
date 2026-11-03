@@ -209,8 +209,12 @@ cd ~/devops-ai-kit
 git fetch --tags && tag=$(git describe --tags --abbrev=0 origin/main) && git checkout "$tag"   # the latest release
 ./install.sh            # update: remove the old kit files, install the new ones, keep the earlier --lang and env
 ./install.sh --lang vi  # change the output language
+./install.sh --env DEVOPS_KIT_PROD_PATTERN='…'   # add or change one env var; the others (KUBECONFIG …) are kept
+./install.sh --unset-env DEVOPS_KIT_DEV_PATTERN   # remove one env var the kit added
 ./uninstall.sh          # remove all kit files + every line the kit added to settings.json
 ```
+
+Env changes apply to new Claude Code sessions: restart Claude Code after an install.
 
 On uninstall: if you did not edit `settings.json` after install, the file goes back **byte for byte** to how it was before. If you did edit it, the kit removes only its own lines and keeps your changes. Empty folders the kit created are removed too.
 
@@ -311,7 +315,9 @@ Run these two skills once per repo, in a Claude Code session opened in the repo:
 - every value is marked ✅ (found in the repo or cluster) or ⚠️ (inferred); Claude asks you to confirm the ⚠️ ones in short rounds;
 - with `--recon <context>` it can also ask the read-only `infra-recon` agent to check the live cluster (it asks you first);
 - if the repo already has a CLAUDE.md, it only adds what is missing and shows you a diff; it never removes your text without asking;
-- it offers to create `PROGRESS.md` too.
+- it offers to create `PROGRESS.md` too;
+- it checks the **production names** with `infra-scout/scripts/prod_names.py`: the hook blocks production by name (`prod`, `prd`, `production`, `live`), so a project whose production context is `k8s-hn-01` or `default` is not protected. Claude tells you, proposes a `DEVOPS_KIT_PROD_PATTERN` and gives you the `./install.sh --env …` command to run; it also warns when a dev name looks like production;
+- conventions that live only in prose (README, wiki: "no deploys on Friday") are proposed as short lines in Claude's own words with their source; only the lines you confirm go into CLAUDE.md.
 
 The most important part of `CLAUDE.md` is the **Environment registry** table: which env ↔ which context ↔ which subscription ↔ who may change it. The core rule makes Claude check this table before it touches infrastructure.
 
