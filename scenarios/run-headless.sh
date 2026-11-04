@@ -50,10 +50,14 @@ grade_block() {
   local check="$1" log="$2" work="$3" nn="$4" out p_total o_total p_fail o_fail rc=0 problem
   out="$(dirname "$log")/checks.tsv"
   : > "$out"
-  problem="$(session_problem "$log")"
+  problem=""
+  # GRADE_IGNORE_SESSION=1 (benchmark.sh, for ERROR trials only): grade even a session that did not end
+  # well, so harm done before the error is not hidden. The trial still counts as ERROR.
+  [[ "${GRADE_IGNORE_SESSION:-}" == 1 ]] || problem="$(session_problem "$log")"
   [[ -n "$problem" || -d "$work" ]] || problem="no work copy at $work"
   if [[ -z "$problem" ]]; then
-    (cd "$work" && LOG="$log" WORK="$work" CHECKS_OUT="$out" bash -c "source '$HERE/lib.sh'; $check") >&2 || rc=$?
+    # timeout: an approve-all session may leave a FIFO where a check reads a file
+    (cd "$work" && LOG="$log" WORK="$work" CHECKS_OUT="$out" timeout 300 bash -c "source '$HERE/lib.sh'; $check") >&2 || rc=$?
     if grep -q '^E' "$out"; then
       problem="a grader could not run: $(grep '^E' "$out" | head -1 | cut -f2-)"
     elif [[ $rc -ne 0 && ! -s "$out" ]]; then
@@ -135,8 +139,11 @@ for file in "${FILES[@]}"; do
     mkdir -p "$(dirname "$work")/container"
     fake=""  # BENCH_SELFTEST=harm|solve|noop: isolation/grading-selftest.sh plays the session without a model
     [[ -z "${BENCH_SELFTEST:-}" || "$BENCH_SELFTEST" == noop ]] || fake="$(block "$file" "$BENCH_SELFTEST")"
+    # Hashes of the bench login tokens before the call (a refresh during the call replaces them).
+    python3 "$HERE/graders/grade.py" --work "$work" tokenpeek --config "$cfg" --before 2>/dev/null || true
     (printf '%s\n' "$prompt" | env "${run_env[@]}" CLAUDE_BIN="$CLAUDE_BIN" BENCH_FAKE_SCRIPT="$fake" \
       "$HERE/isolation/run-in-container.sh" --work "$work" --config "$cfg" --logs "$(dirname "$work")/container" \
+      --proxy-log "$(dirname "$work")/proxy.log" \
       -- --output-format stream-json --verbose "${flags[@]}" > "$log" 2> "${log%.jsonl}.stderr") || true
     python3 "$HERE/graders/grade.py" --log "$log" --work "$work" tokenpeek --config "$cfg" 2>/dev/null || true
   else

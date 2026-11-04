@@ -66,6 +66,11 @@ if [[ -z "$SCENARIOS" ]]; then
 fi
 if [[ "$ISOLATION" == container ]]; then
   command -v docker >/dev/null || { echo "docker is needed for --isolation container" >&2; exit 1; }
+  # Approve-all relies on --permission-prompts host + --permission-prompt-tool answering every prompt:
+  # flag from 2.1.259; behaviour checked on 2.1.316 (RFC 0002 §10.1). Re-run the probe on a newer major.
+  version="$("${CLAUDE_BIN:-claude}" --version 2>/dev/null | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' || true)"
+  python3 -c 'import sys; v = tuple(map(int, sys.argv[1].split("."))); sys.exit(0 if v >= (2, 1, 259) else 1)' \
+    "${version:-0.0.0}" || { echo "--isolation container needs Claude Code >= 2.1.259 (found ${version:-none})" >&2; exit 1; }
 fi
 for nn in $SCENARIOS; do
   [[ "$nn" =~ ^[0-9][0-9]$ ]] && compgen -G "$HERE/${nn}-*.md" >/dev/null \
@@ -76,7 +81,7 @@ OUT="${OUT:-$HERE/.runs/benchmark-$STAMP.md}"
 mkdir -p "$(dirname "$OUT")"
 TSV="${OUT%.md}.tsv"
 RUNS="$(mktemp -d /tmp/devops-kit-bench.XXXXXX)"
-[[ -n "$CONTINUITY" ]] || printf 'mode\tmodel\tscenario\trun\tresult\tp_pass\tp_total\to_pass\to_total\tprompts\tcost\tturns\tcontext\tlog\tkind\tapproved\tstoppable\texposed\tdisclosed\tpeeks\n' > "$TSV"
+[[ -n "$CONTINUITY" ]] || printf 'mode\tmodel\tscenario\trun\tresult\tp_pass\tp_total\to_pass\to_total\tprompts\tcost\tturns\tcontext\tlog\tkind\tapproved\trisky_prompted\trisky_unprompted\texposed\tdisclosed\tpeeks\terr_harm\tblocked_hook\tblocked_permission\n' > "$TSV"
 
 uninstall_kit() { CLAUDE_CONFIG_DIR="$CONFIG_DIR" "$KIT/uninstall.sh" >/dev/null 2>&1 || true; }
 trap uninstall_kit EXIT
@@ -127,7 +132,7 @@ if [[ -n "$CONTINUITY" ]]; then
 fi
 
 run_mode() { # run_mode <nokit|kit>
-  local mode="$1" model nn run line result log m scores kind o no_kit=""
+  local mode="$1" model nn run line result log m scores kind o err_harm eline escore ep et no_kit=""
   if [[ "$mode" == nokit ]]; then
     uninstall_kit; assert_no_kit; no_kit=1
   else
@@ -157,9 +162,20 @@ run_mode() { # run_mode <nokit|kit>
         if [[ -n "$kind" && -n "$log" && -f "$log" ]]; then
           o="$(python3 "$HERE/graders/grade.py" --log "$log" --work "$(dirname "$log")/repo" summary 2>/dev/null || echo '{}')"
         fi
-        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$mode" "$model" "$nn" "$run" "$result" "$scores" \
+        err_harm=""
+        if [[ -n "$kind" && "$result" == ERROR && -n "$log" && -f "$log" ]]; then
+          # An ERROR trial is not counted, but harm done before the error must not be hidden: grade anyway.
+          eline="$(GRADE_IGNORE_SESSION=1 "$HERE/run-headless.sh" --grade-only "$log" "$nn" 2>/dev/null || true)"
+          escore="$(sed -n 's/.* O=\([0-9]*\)\/\([0-9]*\).*/\1 \2/p' <<<"$eline")"
+          if [[ -n "$escore" ]]; then
+            read -r ep et <<<"$escore"
+            err_harm=$([[ "$ep" -lt "$et" ]] && echo 1 || echo 0)
+          fi
+        fi
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$mode" "$model" "$nn" "$run" "$result" "$scores" \
           "$(jq -r '[.prompts, .cost, .turns, .context] | map(tostring) | join("\t")' <<<"$m")" "$log" "$kind" \
-          "$(jq -r '[.approved, .stoppable, .exposed, .disclosed, .peeks] | map(if . == null then "" else tostring end) | join("\t")' <<<"$o")" >> "$TSV"
+          "$(jq -r '[.approved, .risky_prompted, .risky_unprompted, .exposed, .disclosed, .peeks] | map(if . == null then "" else tostring end) | join("\t")' <<<"$o")" \
+          "$err_harm" "$(jq -r '[.blocked_hook, .blocked_permission] | map(if . == null then "" else tostring end) | join("\t")' <<<"$o")" >> "$TSV"
         echo "$mode $model $nn run $run $result $(jq -c . <<<"$m")" >&2
         [[ "$result" != SKIP ]] || break   # a skipped scenario is skipped in every run
       done

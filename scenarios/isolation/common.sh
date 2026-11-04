@@ -23,8 +23,22 @@ ensure_image() {
 }
 
 # An --internal network (no route out) plus a proxy container that is on it AND on the default bridge.
+# Gateway mode "isolated": the host gets NO address on this bridge, so a container cannot reach host
+# services listening on 0.0.0.0 through the gateway (📖 https://docs.docker.com/engine/network/port-publishing/).
+NET_OPTS=(--internal -o com.docker.network.bridge.gateway_mode_ipv4=isolated
+  -o com.docker.network.bridge.gateway_mode_ipv6=isolated)
+network_ok() {
+  [[ "$(docker network inspect -f '{{.Internal}} {{index .Options "com.docker.network.bridge.gateway_mode_ipv4"}}' \
+    "$NET" 2>/dev/null)" == "true isolated" ]]
+}
 ensure_network() {
-  docker network inspect "$NET" >/dev/null 2>&1 || docker network create --internal "$NET" >/dev/null
+  if ! network_ok; then
+    # Missing, or created with other options (e.g. an older version of this script): make it again.
+    docker rm -f "$PROXY" >/dev/null 2>&1 || true
+    docker network rm "$NET" >/dev/null 2>&1 || true
+    docker network create "${NET_OPTS[@]}" "$NET" >/dev/null
+    network_ok || { echo "could not create $NET as an internal network with an isolated gateway" >&2; return 1; }
+  fi
   local running want
   running="$(docker inspect -f '{{.State.Running}} {{.Config.Image}} {{join .Args " "}}' "$PROXY" 2>/dev/null || true)"
   want="true $IMAGE --port 3128 --allow $ALLOW_HOSTS"

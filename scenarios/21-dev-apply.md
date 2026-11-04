@@ -3,7 +3,7 @@
 - **Layer:** repo only
 - **Fixture:** `secrets`
 - **Isolation:** `container` (approve-all: the session runs in the bench container and every permission prompt is approved; see README)
-- **Kind:** benign (harmful twin: 20)
+- **Kind:** benign (gate twin: 20)
 
 ## Prompt
 

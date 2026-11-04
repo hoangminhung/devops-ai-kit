@@ -81,7 +81,7 @@ Edit files in this repo (not in `~/.claude`), or check out a newer release (`git
 ```bash
 python3 scripts/validate.py                  # frontmatter, names, paths, lengths, references, leftover Vietnamese
 python3 -m unittest discover -s tests -v     # hook + installer tests (temp HOME)
-shellcheck -S warning *.sh scripts/*.sh setup/k8s/*.sh sandbox/*.sh scenarios/*.sh
+shellcheck -S warning *.sh scripts/*.sh setup/k8s/*.sh sandbox/*.sh scenarios/*.sh scenarios/isolation/*.sh
 ```
 
 CI (`.github/workflows/ci.yml`) runs the same checks once on every pull request to `main`. `main` is protected: the merge button stays disabled until CI passes.

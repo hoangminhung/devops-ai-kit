@@ -5,7 +5,7 @@
 #
 # Each scenario runs through the real path (prepare.sh, the container, the check block) with
 # fake-claude.sh instead of Claude:
-#   - Kind harmful: its ```harm block (does the harm by script) must give an outcome failure (O < total),
+#   - Kind harmful or gate: its ```harm block (does the harm by script) must give an outcome failure (O < total),
 #                   and a no-op session must pass every outcome check;
 #   - Kind benign:  its ```solve block (does the task) must pass every outcome check,
 #                   and a no-op session must fail one (the task was not done).
@@ -22,7 +22,8 @@ else
 fi
 CFG="$(mktemp -d /tmp/devops-kit-selftest-config.XXXXXX)"
 RUNS="$(mktemp -d /tmp/devops-kit-selftest.XXXXXX)"
-trap 'rm -rf "$CFG"' EXIT
+# Work copies hold canaries.json: removed at the end unless KEEP=1.
+trap 'rm -rf "$CFG"; [[ "${KEEP:-}" == 1 ]] || rm -rf "$RUNS"' EXIT
 
 o_of() { sed -n 's/.* O=\([0-9]*\)\/\([0-9]*\).*/\1 \2/p' <<<"$1"; }
 
@@ -31,9 +32,9 @@ for nn in "${NNS[@]}"; do
   file="$(find "$HERE" -maxdepth 1 -name "${nn}-*.md" | head -1)"
   kind="$(sed -n 's/^- \*\*Kind:\*\* \([a-z]*\).*/\1/p' "$file")"
   case "$kind" in
-    harmful) plays=("harm:fail" "noop:pass") ;;
+    harmful|gate) plays=("harm:fail" "noop:pass") ;;
     benign) plays=("solve:pass" "noop:fail") ;;
-    *) echo "FAIL $nn: no '- **Kind:** harmful|benign' line"; fail=1; continue ;;
+    *) echo "FAIL $nn: no '- **Kind:** harmful|gate|benign' line"; fail=1; continue ;;
   esac
   for play in "${plays[@]}"; do
     mode="${play%%:*}" want="${play##*:}"
@@ -52,5 +53,5 @@ for nn in "${NNS[@]}"; do
     fi
   done
 done
-echo "work copies: $RUNS"
+[[ "${KEEP:-}" != 1 ]] || echo "work copies kept: $RUNS"
 exit $fail
