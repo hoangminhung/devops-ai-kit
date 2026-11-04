@@ -151,10 +151,10 @@ There is no target number for the kit's score in AC7. The benchmark measures; it
 - Scenarios 01–12 tagged: 20 outcome, 28 process (21 process + 7 answer content), pinned by a test.
 - `benchmark.sh --runs N` for the main benchmark (default 1); the TSV gains `run p_pass p_total o_pass o_total`.
 - `benchmark_report.py`: Outcome block first, Process second, Wilson 95% intervals, cost per trial, and a line naming the scenarios whose outcome checks pass in both arms.
-- `scenarios/graders/` (canary, executed commands, file state; 37 unit tests), ready for Part 2 and usable from check blocks through `grade`.
+- `scenarios/graders/` (canary, executed commands, file state; 39 unit tests), ready for Part 2 and usable from check blocks through `grade`.
 - `RESULTS.md`: the 2026-11-01 logs re-graded with the new code.
 
-Acceptance (Part 1): AC1–AC3, AC5 and AC8 of §7 (AC8 = `run-headless.sh --grade-only`). AC4, AC6 and AC7 move to Part 2.
+Acceptance (Part 1): AC1–AC3, AC5 and AC8 of §7 (AC3 without the `scenarios/isolation/*.sh` glob, which comes with Part 2; AC8 = `run-headless.sh --grade-only`, not `grade.py regrade`). AC4, AC6 and AC7 move to Part 2.
 
 ### Round 2 (2026-11-04): CHANGES REQUIRED → fixed in Part 1 or moved to Part 2
 
