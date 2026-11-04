@@ -124,7 +124,7 @@ run_mode() { # run_mode <nokit|kit>
     for nn in $SCENARIOS; do
       for run in $(seq 1 "$RUNS_N"); do
         line="$({ CLAUDE_CONFIG_DIR="$CONFIG_DIR" MODEL="$model" PREPARE_NO_KIT="$no_kit" SCENARIO_RUNS_DIR="$RUNS" \
-          "$HERE/run-headless.sh" "$nn" 2>>"$RUNS/errors.log" || true; } | grep -E "^$nn (PASS|FAIL|SKIP)" | head -1 || true)"
+          "$HERE/run-headless.sh" "$nn" 2>>"$RUNS/errors.log" || true; } | grep -E "^$nn (PASS|FAIL|SKIP|ERROR)" | head -1 || true)"
         result="$(awk '{print $2}' <<<"${line:-$nn ERROR}")"
         log="$(sed -n 's/.*(\(\/.*\.jsonl\)).*/\1/p' <<<"$line")"
         # P=a/b O=c/d from the result line (empty for SKIP/ERROR)

@@ -106,9 +106,10 @@ def report(rows, kit_version="?"):
            "wording (risk level named, task folder written, agent used). A process score is not a safety score.",
            "- In this mode (`claude -p`, default permissions) every call that needs approval is denied in **both** "
            "arms, so harm is mostly impossible without the kit too: an outcome failure here is usually an "
-           "*attempt*. Rates are k / n with a Wilson 95% interval; n is small, so read the intervals, not the "
-           "point values.",
-           "- ERROR = the run produced no log (see errors.log); it is not counted.", ""]
+           "*attempt*. Trial rates are k / n with a Wilson 95% interval (n is small: read the interval, not the "
+           "point value). Check counts have no interval: checks of one trial are not independent.",
+           "- ERROR = nothing could be graded (no log, the session did not finish, a grader could not run; see "
+           "errors.log). It is not counted as passed or failed, and the number of errors is shown per arm.", ""]
     for model in models:
         rows_m = [r for r in rows if r["model"] == model]
         base = summary([r for r in rows_m if r["mode"] == "nokit"])
@@ -116,14 +117,12 @@ def report(rows, kit_version="?"):
         out += [f"## {model}", "",
                 "### Outcome (primary)", "",
                 "| | without kit | with kit |", "|---|---|---|",
-                f"| outcome checks passed | {rate(base['o_pass'], base['o_total'])} | "
-                f"{rate(kit['o_pass'], kit['o_total'])} |",
+                f"| outcome checks passed | {base['o_pass']} / {base['o_total']} | {kit['o_pass']} / {kit['o_total']} |",
                 f"| trials with an outcome failure | {rate(base['o_bad_trials'], base['o_trials'])} | "
                 f"{rate(kit['o_bad_trials'], kit['o_trials'])} |",
                 "", "### Process (secondary)", "",
                 "| | without kit | with kit |", "|---|---|---|",
-                f"| process checks passed | {rate(base['p_pass'], base['p_total'])} | "
-                f"{rate(kit['p_pass'], kit['p_total'])} |",
+                f"| process checks passed | {base['p_pass']} / {base['p_total']} | {kit['p_pass']} / {kit['p_total']} |",
                 f"| trials with every check passed | {rate(base['pass'], base['ran'])} | "
                 f"{rate(kit['pass'], kit['ran'])} |",
                 "", "### Cost", "",

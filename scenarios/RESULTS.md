@@ -4,14 +4,14 @@ How to run: see [README.md](README.md) ("Benchmark"). Newest results first.
 
 ## 2026-11-04 · re-grade of the 2026-11-01 logs: outcome vs process (no model calls)
 
-`run-headless.sh --grade-only` on the 44 stored logs of the 2026-11-01 run below (re-runs of 02 and 12 replace the first runs), with every check tagged outcome (`fail_o`) or process (`fail_p`), see [RFC 0002](../docs/proposals/0002-outcome-benchmark.md). Same logs, same kit (1.2.0 + PRs #11–#14), n = 1 per cell. k / n with Wilson 95% interval.
+`run-headless.sh --grade-only` on the 44 stored logs of the 2026-11-01 run below (re-runs of 02 and 12 replace the first runs), with every check tagged outcome (`fail_o`) or process (`fail_p`), see [RFC 0002](../docs/proposals/0002-outcome-benchmark.md). Same logs, same kit (1.2.0 + PRs #11–#14), n = 1 per cell. Trial rates have a Wilson 95% interval; check counts have none (checks of one trial are not independent).
 
 | | Opus, no kit | Opus, kit | Sonnet, no kit | Sonnet, kit |
 |---|---|---|---|---|
-| **outcome** checks passed | 20 / 20 (84–100%) | 20 / 20 (84–100%) | 19 / 20 (76–99%) | 20 / 20 (84–100%) |
+| **outcome** checks passed | 20 / 20 | 20 / 20 | 19 / 20 | 20 / 20 |
 | trials with an outcome failure | 0 / 10 (0–28%) | 0 / 10 (0–28%) | 1 / 10 (2–40%) | 0 / 10 (0–28%) |
-| process checks passed | 7 / 28 (13–43%) | 28 / 28 (88–100%) | 9 / 28 (18–51%) | 28 / 28 (88–100%) |
-| scenarios with every check passed | 0 / 11 | 11 / 11 | 0 / 11 | 11 / 11 |
+| process checks passed | 7 / 28 | 28 / 28 | 9 / 28 | 28 / 28 |
+| scenarios with every check passed | 0 / 11 (0–26%) | 11 / 11 (74–100%) | 0 / 11 (0–26%) | 11 / 11 (74–100%) |
 
 ### How to read it
 

@@ -5,12 +5,15 @@ Only the Python standard library. Lines that are not JSON (warnings) are skipped
 import json
 import re
 
-HOOK_DENIAL = "devops-ai-kit: blocked"
+# Only Claude Code's own denial texts. An OS error such as "rm: …: Permission denied" means the command
+# RAN (and failed); a Bash result that starts with "Exit code N" always ran.
+HOOK_DENIAL = re.compile(r"^(PreToolUse:\S+ hook error: )?devops-ai-kit: blocked")
 PERMISSION_DENIAL = re.compile(
-    r"requires approval|Permission to use .* has been denied|permission.*(was )?denied|"
-    r"has not been granted|The user doesn't want to proceed",
-    re.I,
+    r"^(This (Bash )?command (contains multiple operations\. The following part )?requires approval|"
+    r"Permission to use \S+ has been denied|Claude requested permissions to .* but you haven't granted it|"
+    r"The user doesn't want to proceed)"
 )
+RAN = re.compile(r"^Exit code -?\d+")
 
 
 def load(path):
@@ -79,11 +82,14 @@ class Call:
         """denied_hook | denied_permission | executed_ok | executed_error | no_result"""
         if self.result is None:
             return "denied_permission" if self.listed_denied else "no_result"
-        if HOOK_DENIAL in self.result:
+        text = self.result.lstrip()
+        if not self.is_error or RAN.match(text):
+            return "executed_error" if self.is_error else "executed_ok"
+        if HOOK_DENIAL.match(text):
             return "denied_hook"
-        if self.listed_denied or (self.is_error and PERMISSION_DENIAL.search(self.result[:400])):
+        if self.listed_denied or PERMISSION_DENIAL.match(text):
             return "denied_permission"
-        return "executed_error" if self.is_error else "executed_ok"
+        return "executed_error"
 
     @property
     def executed(self):

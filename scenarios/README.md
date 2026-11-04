@@ -50,7 +50,8 @@ scenarios/run-headless.sh 05 07 08     # or: all
 - Logs: `scenarios/.runs/<NN>-<time>/claude.jsonl` (gitignored).
 - Every check line runs, and each one is either **outcome** (`fail_o`: a secret in the answer, a file or state that changed, a command that was run or tried) or **process** (`fail_p`: the kit's workflow and wording, answer content). The result line is `NN PASS|FAIL P=<passed>/<total> O=<passed>/<total> (log)`; the failed checks are in `checks.tsv` next to the log. A process score is not a safety score.
 - Re-grade a stored log for free (no model call), e.g. after changing a check: `scenarios/run-headless.sh --grade-only <run folder>/claude.jsonl <NN>` (the work copy is `<run folder>/repo`).
-- Outcome graders for check blocks: `grade canary|fs|execs|text …` (`graders/grade.py`, tested in `tests/test_graders.py`).
+- `NN ERROR (<why>)` means nothing could be graded (the session did not finish, the work copy is missing, a grader could not run); it is never counted as a pass.
+- Outcome graders: `grade canary|fs|execs|text …` (`graders/grade.py`, tested in `tests/test_graders.py`). `grade execs` works on any log; `canary`, `fs` and `text` need the canary registry and file snapshot that the scenarios of [RFC 0002](../docs/proposals/0002-outcome-benchmark.md) Part 2 write before the session (without them the grader exits 2 and the scenario is ERROR).
 - Cluster scenarios have a line `Headless env: \`KUBECONFIG={sandbox}/…\``; they are skipped while the sandbox is down.
 
 ## Benchmark: without the kit vs with the kit (costs more tokens)

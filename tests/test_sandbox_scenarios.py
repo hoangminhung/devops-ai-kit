@@ -218,10 +218,21 @@ class Lib(unittest.TestCase):
     def test_fail_o_and_fail_p_record_the_class_and_every_line_runs(self):
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp, "checks.tsv")
-            check = 'false || fail_o "leaked"\ntrue || fail_o "never"\nfalse || fail_p "no gate"\nfalse || fail "old name"'
+            check = 'false || fail_o "leaked"\ntrue || fail_o "never"\nfalse || fail_p "no gate"'
             subprocess.run(["bash", "-c", f"source '{SCENARIOS / 'lib.sh'}'; {check}"],
                            env=dict(os.environ, CHECKS_OUT=str(out)), capture_output=True, text=True)
-            self.assertEqual(out.read_text(), "O\tleaked\nP\tno gate\nP\told name\n")
+            self.assertEqual(out.read_text(), "O\tleaked\nP\tno gate\n")
+
+    def test_a_grader_that_cannot_run_is_recorded_as_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp, "checks.tsv")
+            Path(tmp, "repo").mkdir()
+            Path(tmp, "claude.jsonl").write_text("{}\n")
+            result = subprocess.run(["bash", "-c", f"source '{SCENARIOS / 'lib.sh'}'; grade canary"],
+                                    env=dict(os.environ, CHECKS_OUT=str(out), LOG=f"{tmp}/claude.jsonl",
+                                             WORK=f"{tmp}/repo"), capture_output=True, text=True)
+            self.assertEqual(result.returncode, 2)
+            self.assertTrue(out.read_text().startswith("E\tgrade canary"))
 
 
 class Tagging(unittest.TestCase):
@@ -229,7 +240,7 @@ class Tagging(unittest.TestCase):
         for path in SCENARIO_FILES:
             check = block(path.read_text(encoding="utf-8"), "check") or ""
             with self.subTest(scenario=path.name):
-                self.assertNotRegex(check, r'\bfail "', "use fail_o (outcome) or fail_p (process)")
+                self.assertNotRegex(check, r"(?<![\w-])fail(?![\w])", "use fail_o (outcome) or fail_p (process)")
 
     def test_outcome_and_process_counts_of_scenarios_01_to_12(self):
         counts = {"O": 0, "P": 0}
@@ -269,6 +280,23 @@ class GradeOnly(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertRegex(result.stdout, r"^11 PASS P=3/3 O=4/4  \(")
         self.assertEqual(checks, "")
+
+    def test_a_session_that_did_not_finish_is_an_error_not_a_safe_trial(self):
+        for events in ([], [{"type": "result", "subtype": "error_max_turns", "is_error": True, "result": ""}]):
+            with self.subTest(events=events):
+                result, _ = self.grade("03", events)
+                self.assertEqual(result.returncode, 3)
+                self.assertRegex(result.stdout, r"^03 ERROR \(")
+
+    def test_missing_work_copy_is_an_error(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp)
+        log = Path(tmp, "claude.jsonl")
+        log.write_text(json.dumps({"type": "result", "result": "ok"}) + "\n")
+        result = subprocess.run([str(SCENARIOS / "run-headless.sh"), "--grade-only", str(log), "03"],
+                                capture_output=True, text=True, timeout=60, env=dict(os.environ, CLAUDE_BIN="/nonexistent"))
+        self.assertEqual(result.returncode, 3)
+        self.assertIn("03 ERROR (no work copy", result.stdout)
 
 
 class Report(unittest.TestCase):

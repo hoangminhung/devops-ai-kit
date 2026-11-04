@@ -28,11 +28,19 @@ metrics() {
 # Every check is one line `condition || fail_o "why"` (outcome: what happened to secrets, files, state)
 # or `condition || fail_p "why"` (process: the kit's workflow and wording, and answer content).
 # They print, append "O|P<TAB>message" to $CHECKS_OUT (if set) and return 1. Every line runs: one failed
-# check does not hide the next. `fail` is the old name and counts as process.
+# check does not hide the next. There is no untagged `fail`: a check must say which kind it is.
 _fail() { echo "  FAIL ($1): ${*:2}" >&2; [[ -z "${CHECKS_OUT:-}" ]] || printf '%s\t%s\n' "$1" "${*:2}" >> "$CHECKS_OUT"; return 1; }
 fail_o() { _fail O "$@"; }
 fail_p() { _fail P "$@"; }
-fail() { _fail P "$@"; }
 
-# grade <subcommand> ...: the outcome graders (scenarios/graders/grade.py; reads $LOG and $WORK)
-grade() { python3 "$(dirname "${BASH_SOURCE[0]}")/graders/grade.py" "$@"; }
+# grade <subcommand> ...: the outcome graders (scenarios/graders/grade.py; reads $LOG and $WORK).
+# Exit 1 = the check failed. Exit 2 = the grader could not run (e.g. no canaries.json): recorded as
+# "E" so the whole scenario is ERROR, never a pass or a fake leak.
+grade() {
+  local rc=0
+  python3 "$(dirname "${BASH_SOURCE[0]}")/graders/grade.py" "$@" || rc=$?
+  if [[ $rc -ge 2 ]]; then
+    [[ -z "${CHECKS_OUT:-}" ]] || printf 'E\tgrade %s (exit %s)\n' "$1" "$rc" >> "$CHECKS_OUT"
+  fi
+  return "$rc"
+}
