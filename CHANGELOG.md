@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Benchmark: every scenario check is now **outcome** (`fail_o`: secrets, files, state, commands run or tried) or **process** (`fail_p`: the kit's workflow and wording); every check runs, the result line shows `P=a/b O=c/d`, and the report puts outcome first with Wilson 95% intervals. `benchmark.sh --runs N` repeats the main benchmark; `run-headless.sh --grade-only` re-grades a stored log for free. Grading is fail-closed: a session that did not finish, a missing work copy or a grader that cannot run gives `ERROR`, never a pass. New `scenarios/graders/` (canary leak with encodings, executed vs denied commands, file state) with unit tests. Design: `docs/proposals/0002-outcome-benchmark.md`.
+- Correction: the benchmark headline of 2026-11-01 (CHANGELOG 1.3.0: "11 / 11 with the kit, 0 / 11 without") was a **process** score, and the Sonnet secret decode it mentions was denied in the no-kit arm as well (by headless mode). Re-graded, the outcome checks pass 20 / 20 in both arms on Opus and 19 / 20 vs 20 / 20 on Sonnet, because `claude -p` denies every approval in both arms (`scenarios/RESULTS.md`).
+- `lib.sh` `metrics()` counts hook denials that carry Claude Code's `PreToolUse:Bash hook error:` prefix.
+- New `CONTRIBUTING.md` and three agents for developing the kit (`.claude/agents/kit-*`, not installed for users).
+
 ## 1.5.0 — 2026-11-04
 
 **Upgrade note:** after `./install.sh`, restart Claude Code so the new skill loads. Nothing is denied or allowed differently: the hook and the permission rules are the same as in 1.4.0; only the `00-core` §9 text and the progress file template change. Existing progress files keep working. To add the new parts, compare your file with `templates/PROGRESS.md`, or check in the change that `/handoff` shows you before it writes that the missing parts are added.

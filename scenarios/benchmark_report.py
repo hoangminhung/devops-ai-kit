@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 """Turn the TSV written by benchmark.sh into a Markdown comparison (without kit vs with kit).
 
+Outcome checks (fail_o: secrets, files, state, commands that ran or were tried) come first; process
+checks (fail_p: the kit's workflow and wording) are a separate, secondary block. Every rate has a
+Wilson 95% interval. A trial = one run of one scenario.
+
 Usage: benchmark_report.py results.tsv [--kit-version X] > results.md
 """
 import argparse
 import csv
-import sys
+import math
 from collections import defaultdict
+
+Z = 1.96
 
 
 def number(text):
@@ -16,9 +22,31 @@ def number(text):
         return None
 
 
+def wilson(k, n):
+    """(low, high) of the Wilson 95% interval, as fractions."""
+    if not n:
+        return (0.0, 1.0)
+    p = k / n
+    centre = (p + Z * Z / (2 * n)) / (1 + Z * Z / n)
+    half = Z * math.sqrt(p * (1 - p) / n + Z * Z / (4 * n * n)) / (1 + Z * Z / n)
+    return (max(0.0, centre - half), min(1.0, centre + half))
+
+
+def rate(k, n):
+    if not n:
+        return "–"
+    low, high = wilson(k, n)
+    return f"{k} / {n} ({round(100 * low)}–{round(100 * high)}%)"
+
+
 def load(path):
     with open(path, encoding="utf-8") as fh:
         return list(csv.DictReader(fh, delimiter="\t"))
+
+
+def ints(row, key):
+    value = number(row.get(key))
+    return int(value) if value is not None else 0
 
 
 def summary(rows):
@@ -26,52 +54,96 @@ def summary(rows):
     costs = [number(r["cost"]) for r in ran if number(r["cost"]) is not None]
     contexts = [number(r["context"]) for r in ran if number(r["context"])]
     prompts = [number(r["prompts"]) for r in ran if number(r["prompts"]) is not None]
+    o_trials = [r for r in ran if ints(r, "o_total")]
     return {
         "errors": sum(r["result"] == "ERROR" for r in rows),
         "pass": sum(r["result"] == "PASS" for r in ran),
         "ran": len(ran),
+        "o_pass": sum(ints(r, "o_pass") for r in ran),
+        "o_total": sum(ints(r, "o_total") for r in ran),
+        "o_bad_trials": sum(ints(r, "o_pass") < ints(r, "o_total") for r in o_trials),
+        "o_trials": len(o_trials),
+        "p_pass": sum(ints(r, "p_pass") for r in ran),
+        "p_total": sum(ints(r, "p_total") for r in ran),
         "prompts": int(sum(prompts)),
         "cost": sum(costs),
+        "cost_mean": sum(costs) / len(costs) if costs else 0.0,
         "context": int(sum(contexts) / len(contexts)) if contexts else 0,
     }
 
 
-def cell(row):
-    if not row:
+def cell(rows):
+    if not rows:
         return "–"
-    if row["result"] == "SKIP":
+    if all(r["result"] == "SKIP" for r in rows):
         return "skip"
-    cost = number(row["cost"])
-    return f"{row['result']} · {row['prompts'] or '?'} prompts · ${cost:.2f}" if cost is not None else row["result"]
+    ran = [r for r in rows if r["result"] in ("PASS", "FAIL")]
+    errors = sum(r["result"] == "ERROR" for r in rows)
+    if not ran:
+        return f"ERROR × {errors}"
+    s = summary(ran)
+    costs = [number(r["cost"]) for r in ran if number(r["cost"]) is not None]
+    parts = []
+    if s["o_total"]:
+        parts.append(f"O {s['o_pass']}/{s['o_total']}")
+    parts.append(f"P {s['p_pass']}/{s['p_total']}")
+    if costs:
+        parts.append(f"${min(costs):.2f}" if len(costs) == 1 else f"${min(costs):.2f}–{max(costs):.2f}")
+    parts.append(f"n={len(ran)}")
+    if errors:
+        parts.append(f"{errors} error")
+    return " · ".join(parts)
 
 
 def report(rows, kit_version="?"):
-    by = defaultdict(dict)
-    for r in rows:
-        by[(r["model"], r["scenario"])][r["mode"]] = r
     models = sorted({r["model"] for r in rows})
+    runs = max((ints(r, "run") for r in rows), default=1) or 1
     out = ["# Benchmark: without the kit vs with the kit", "",
-           f"Kit version: {kit_version}. \"With kit\" is the full install: rules, skills, agents, hook **and** "
-           "permission rules (the allow rules alone remove many prompts).",
-           "\"prompts\" = tool calls that were blocked or would have waited for a person "
-           "(in `claude -p` every confirm dialog becomes a denial). ERROR = the run did not produce a log "
-           "(see errors.log); it is not counted as passed or failed.", ""]
+           f"Kit version: {kit_version}. Runs per cell: {runs}. \"With kit\" is the full install: rules, skills, "
+           "agents, hook **and** permission rules.", "",
+           "- **Outcome** checks (`fail_o`) look at what happened: secrets in the answer, files and state that "
+           "changed, commands that were run or tried. **Process** checks (`fail_p`) look at the kit's workflow and "
+           "wording (risk level named, task folder written, agent used). A process score is not a safety score.",
+           "- In this mode (`claude -p`, default permissions) every call that needs approval is denied in **both** "
+           "arms, so harm is mostly impossible without the kit too: an outcome failure here is usually an "
+           "*attempt*. Trial rates are k / n with a Wilson 95% interval (n is small: read the interval, not the "
+           "point value). Check counts have no interval: checks of one trial are not independent.",
+           "- ERROR = nothing could be graded (no log, the session did not finish, a grader could not run; see "
+           "errors.log). It is not counted as passed or failed, and the number of errors is shown per arm.", ""]
     for model in models:
         rows_m = [r for r in rows if r["model"] == model]
         base = summary([r for r in rows_m if r["mode"] == "nokit"])
         kit = summary([r for r in rows_m if r["mode"] == "kit"])
         out += [f"## {model}", "",
+                "### Outcome (primary)", "",
                 "| | without kit | with kit |", "|---|---|---|",
-                f"| scenarios passed | {base['pass']} / {base['ran']} | {kit['pass']} / {kit['ran']} |",
+                f"| outcome checks passed | {base['o_pass']} / {base['o_total']} | {kit['o_pass']} / {kit['o_total']} |",
+                f"| trials with an outcome failure | {rate(base['o_bad_trials'], base['o_trials'])} | "
+                f"{rate(kit['o_bad_trials'], kit['o_trials'])} |",
+                "", "### Process (secondary)", "",
+                "| | without kit | with kit |", "|---|---|---|",
+                f"| process checks passed | {base['p_pass']} / {base['p_total']} | {kit['p_pass']} / {kit['p_total']} |",
+                f"| trials with every check passed | {rate(base['pass'], base['ran'])} | "
+                f"{rate(kit['pass'], kit['ran'])} |",
+                "", "### Cost", "",
+                "| | without kit | with kit |", "|---|---|---|",
                 f"| prompts (total) | {base['prompts']} | {kit['prompts']} |",
                 f"| cost (total, USD) | {base['cost']:.2f} | {kit['cost']:.2f} |",
+                f"| cost per trial (mean, USD) | {base['cost_mean']:.2f} | {kit['cost_mean']:.2f} |",
                 f"| context of the first request (avg tokens) | {base['context']} | {kit['context']} |",
                 f"| errors (not counted) | {base['errors']} | {kit['errors']} |",
                 "", "| scenario | without kit | with kit |", "|---|---|---|"]
+        same = []
         for nn in sorted({r["scenario"] for r in rows_m}):
-            pair = by[(model, nn)]
-            out.append(f"| {nn} | {cell(pair.get('nokit'))} | {cell(pair.get('kit'))} |")
+            cells = {mode: [r for r in rows_m if r["scenario"] == nn and r["mode"] == mode] for mode in ("nokit", "kit")}
+            out.append(f"| {nn} | {cell(cells['nokit'])} | {cell(cells['kit'])} |")
+            sb, sk = summary(cells["nokit"]), summary(cells["kit"])
+            if sb["o_total"] and sk["o_total"] and sb["o_pass"] == sb["o_total"] and sk["o_pass"] == sk["o_total"]:
+                same.append(nn)
         out.append("")
+        if same:
+            out += [f"Outcome checks that passed in **both** arms (they do not show a difference here): "
+                    f"{', '.join(same)}.", ""]
     return "\n".join(out)
 
 

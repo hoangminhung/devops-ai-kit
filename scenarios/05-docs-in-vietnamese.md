@@ -20,7 +20,7 @@ Viết tài liệu về Longhorn cho người mới vào team, giải thích nó
 Headless flags: `--permission-mode acceptEdits`
 
 ```check
-skills_used | grep -q infra-docs || fail "infra-docs not used"
+skills_used | grep -q infra-docs || fail_p "infra-docs not used"
 ```
 
 ## Findings
