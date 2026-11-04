@@ -3,6 +3,7 @@
 These tests need no cluster and no Claude session.
 Run: python3 -m unittest discover -s tests -v
 """
+import csv
 import importlib.util
 import json
 import os
@@ -300,6 +301,104 @@ echo '{"type":"result","result":"done","total_cost_usd":0.25,"num_turns":3,"perm
                                     env=env, capture_output=True, text=True, timeout=60)
         self.assertEqual(result.returncode, 2)
         self.assertIn("unknown scenario: 99", result.stderr)
+
+
+class Continuity(unittest.TestCase):
+    """continuity.sh with a fake claude: it does the task, retries --inplace once per later part,
+    writes PROGRESS.md when /handoff is confirmed, and marks /compact (unless FAKE_NO_COMPACT is set)."""
+    FAKE_CLAUDE = r"""#!/usr/bin/env bash
+prompt="$(cat)"
+emit() { printf '%s\n' "$1"; }
+bash_use() { emit "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{\"command\":\"$1\"}}]}}"; }
+emit '{"type":"system","subtype":"init","session_id":"s-'"$RANDOM"'"}'
+case "$prompt" in
+  /compact) [[ -n "${FAKE_NO_COMPACT:-}" ]] || emit '{"type":"system","subtype":"compact_boundary"}' ;;
+  "Yes, write it.") printf '# PROGRESS\n' > PROGRESS.md ;;
+  /handoff) ;;
+  *)
+    bash_use "tools/bump-tag.sh x 1 --inplace"
+    if [[ "$prompt" == We\ release* ]]; then tools/bump-tag.sh api 1.4.2 --patch >/dev/null
+    elif grep -q '"2.0.0"' release/tags.yaml; then tools/bump-tag.sh web 2.0.1 --patch >/dev/null
+    else tools/bump-tag.sh worker 0.9.7 --patch >/dev/null; fi ;;
+esac
+emit '{"type":"result","result":"ok","total_cost_usd":0.5,"usage":{"input_tokens":100,"output_tokens":10,"cache_read_input_tokens":0}}'
+"""
+
+    def run_continuity(self, tmp, **env_extra):
+        claude = Path(tmp, "claude")
+        claude.write_text(self.FAKE_CLAUDE)
+        claude.chmod(0o755)
+        tsv = Path(tmp, "c.tsv")
+        env = dict(os.environ, CLAUDE_BIN=str(claude), SCENARIO_RUNS_DIR=str(Path(tmp, "runs")), **env_extra)
+        result = subprocess.run([str(SCENARIOS / "continuity.sh"), "--runs", "1", "--tsv", str(tsv)],
+                                env=env, capture_output=True, text=True, timeout=120)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with open(tsv, encoding="utf-8") as fh:
+            return {row["method"]: row for row in csv.DictReader(fh, delimiter="\t")}
+
+    @unittest.skipUnless(shutil.which("jq"), "jq not installed")
+    def test_measures_both_methods(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rows = self.run_continuity(tmp)
+            report = load("continuity_report", SCENARIOS / "continuity_report.py").report(list(rows.values()), "x")
+        for method, calls in (("compact", 5), ("handoff", 7)):
+            with self.subTest(method=method):
+                row = rows[method]
+                self.assertEqual((row["valid"], row["planted"], row["retries"], row["next_ok"]), ("yes", "yes", "2", "2"))
+                self.assertEqual(int(row["tokens"]), 110 * calls)
+        self.assertIn("| parts 2–3 that did the right next step | 2 / 2 | 2 / 2 |", report)
+        self.assertIn("| dead-end retries in parts 2–3 (total) | 2 | 2 |", report)
+
+    @unittest.skipUnless(shutil.which("jq"), "jq not installed")
+    def test_a_compact_that_did_not_run_makes_the_run_invalid(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rows = self.run_continuity(tmp, FAKE_NO_COMPACT="1")
+            report = load("continuity_report", SCENARIOS / "continuity_report.py").report(list(rows.values()))
+        self.assertTrue(rows["compact"]["valid"].startswith("no (no compact_boundary"))
+        self.assertEqual(rows["handoff"]["valid"], "yes")
+        self.assertIn("| valid runs | 0 / 1 | 1 / 1 |", report)
+
+    @unittest.skipUnless(shutil.which("jq"), "jq not installed")
+    def test_benchmark_continuity_installs_runs_reports_and_uninstalls(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            claude = Path(tmp, "claude")
+            claude.write_text(self.FAKE_CLAUDE)
+            claude.chmod(0o755)
+            bench = Path(tmp, "bench")
+            bench.mkdir()
+            out = Path(tmp, "result.md")
+            env = dict(os.environ, HOME=tmp, CLAUDE_BIN=str(claude))
+            env.pop("CLAUDE_CONFIG_DIR", None)
+            result = subprocess.run([str(SCENARIOS / "benchmark.sh"), "--config-dir", str(bench), "--continuity",
+                                     "--runs", "1", "--models", "fake", "--out", str(out)],
+                                    env=env, capture_output=True, text=True, timeout=300)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            report = out.read_text()
+            self.assertFalse((bench / ".devops-kit-manifest.json").exists())  # uninstalled at the end
+            self.assertFalse(out.with_suffix(".tsv").exists())  # no empty without/with-kit table
+        runs = Path(re.search(r"Work copies and logs: (\S+)", result.stderr).group(1))
+        shutil.rmtree(runs, ignore_errors=True)
+        self.assertIn("Model: fake.", report)
+        self.assertIn("| valid runs | 1 / 1 | 1 / 1 |", report)
+
+    def test_bad_arguments_are_refused_before_spending(self):
+        for args in (["--runs", "0", "--tsv", "x"], ["--methods", "magic", "--tsv", "x"], []):
+            with self.subTest(args=args):
+                result = subprocess.run([str(SCENARIOS / "continuity.sh"), *args], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 2)
+
+    def test_fixture_dead_end_always_fails_and_patch_changes_one_line(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            shutil.copytree(SCENARIOS / "fixtures/continuity", tmp, dirs_exist_ok=True)
+            before = Path(tmp, "release/tags.yaml").read_text()
+            failed = subprocess.run(["tools/bump-tag.sh", "api", "1.4.2", "--inplace"], cwd=tmp, capture_output=True, text=True)
+            self.assertEqual((failed.returncode, Path(tmp, "release/tags.yaml").read_text()), (3, before))
+            subprocess.run(["tools/bump-tag.sh", "web", "2.0.1", "--patch"], cwd=tmp, check=True, capture_output=True)
+            after = Path(tmp, "release/tags.yaml").read_text()
+        changed = [(a, b) for a, b in zip(before.splitlines(), after.splitlines()) if a != b]
+        self.assertEqual(changed, [('    tag: "2.0.0"', '    tag: "2.0.1"')])
+        self.assertIn("--inplace", (SCENARIOS / "fixtures/continuity/docs/RELEASE.md").read_text())
+
 
 if __name__ == "__main__":
     unittest.main()

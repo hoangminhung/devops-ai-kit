@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- New skill `/handoff` (trial): before `/clear`, it saves the session state to the progress file. It rebuilds **Current state** and **Next steps** from what was checked, adds this session's **Dead ends — do not retry** (each with `revisit if:`), reads an active `/infra-task` folder only through `plan_status.py status` (never edits it), checks the file's hash before writing so another session's change is merged, and asks once. Design and trial plan: `docs/proposals/0001-handoff-pickup.md`.
+- `templates/PROGRESS.md` and `00-core` §9: new parts **Next steps** and **Dead ends — do not retry**; live facts carry `checked: <date>`. Guide §5.6 (en/vi): short task → `/clear` only; long task, a dead end, or a switch of machine or interface → `/handoff` first; transcripts are kept for `cleanupPeriodDays` (default 30).
+- Scenario 13 and `benchmark.sh --continuity [--runs N]`: a three-part release carried by `/compact` (one session) or by `/handoff` + a new session; measures tokens, dead-end retries and the right next step. Not run yet (costs tokens).
+
 ## 1.4.0 — 2026-11-03
 
 **Upgrade note:** after `./install.sh`, restart Claude Code so the new settings load. Changes you will notice:

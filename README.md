@@ -15,7 +15,7 @@ Full guide: [docs/en/guide.md](docs/en/guide.md) · Terms: [docs/en/glossary.md]
 | Layer | Contents | How it loads |
 |---|---|---|
 | Rules | `00-core` (safety, risk levels L0–L3, evidence, docs), `01-language` (output language) + Terraform, Ansible, Kubernetes, Helm, Argo CD, Dockerfile, observability | `00-core` and `01-language` always; the rest through `paths:` when matching files are touched |
-| Skills | `/infra-scout` + `/infra-rulebook` (onboard a repo: CLAUDE.md and rule coverage), `/infra-task` workflow, `grill-me` (asks you questions until the context is complete), `infra-docs` (change record, concept note, runbook, ADR, postmortem), 8 design-standard skills, 3 playbooks (monitoring stack, PostgreSQL migration with PGO, AKS) | On demand (description match or slash command) |
+| Skills | `/infra-scout` + `/infra-rulebook` (onboard a repo: CLAUDE.md and rule coverage), `/infra-task` workflow, `grill-me` (asks you questions until the context is complete), `/handoff` (saves the session state to `PROGRESS.md` before `/clear`), `infra-docs` (change record, concept note, runbook, ADR, postmortem), 8 design-standard skills, 3 playbooks (monitoring stack, PostgreSQL migration with PGO, AKS) | On demand (description match or slash command) |
 | Subagents | `infra-recon`, `infra-researcher`, `infra-reviewer`, `infra-verifier`, `infra-scribe` | Called by `/infra-task` or on request |
 | Guardrails | Permission rules (deny/ask/allow), a PreToolUse hook that shows the real target (context, namespace, workspace, subscription) on every mutating command and denies forbidden commands in any flag order, read-only RBAC + kubeconfig generator for the AI | Enforced by Claude Code / Kubernetes, not by the model |
 
@@ -48,7 +48,7 @@ For cloud CLIs (Azure / AWS / GCP), see [docs/en/cloud-readonly.md](docs/en/clou
 
 - L0/L1 work: prompt as usual; the rules apply automatically.
 - Not sure what to ask for, or Claude lacks context: `/grill-me <topic>`. Claude asks short rounds of questions, each with a recommended answer.
-- Long-running projects: keep a `PROGRESS.md` (template in `templates/`). Claude reads it at the start of each session and updates it after each task, so nothing is lost when a session ends.
+- Long-running projects: keep a `PROGRESS.md` (template in `templates/`). Claude reads it at the start of each session and updates it after each task, so nothing is lost when a session ends. Before `/clear` after long work, run `/handoff`.
 - L2/L3 work: `/infra-task <description>` → recon → research → plan → review → **approval gate** → implement → review → **approval gate** → execute → verify → docs. Resume at any time with `/infra-task resume <task-folder>` (continues from the first unticked step). `--mode auto` skips the pauses between paper phases for L1/L2 (gates and mutating commands still wait for you); big tasks can be cut into slices.
 
 ## Layout
@@ -59,7 +59,7 @@ devops-ai-kit/
 ├── claude/                  # installed into ~/.claude/
 │   ├── rules/devops-kit/    # 00-core + 7 technology rules
 │   ├── lang/                # en.md, vi.md → 01-language.md
-│   ├── skills/              # 16 skills
+│   ├── skills/              # 17 skills
 │   ├── agents/              # 5 subagents
 │   ├── hooks/devops-kit/    # infra-context-guard.py
 │   └── settings.devops-kit.json

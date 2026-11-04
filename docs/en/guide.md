@@ -63,7 +63,7 @@ devops-ai-kit/
 ├── claude/                                # content installed into ~/.claude/
 │   ├── rules/devops-kit/                  # 00-core + 7 technology rules
 │   ├── lang/                              # en.md, vi.md → installed as 01-language.md by --lang
-│   ├── skills/                            # 16 skills
+│   ├── skills/                            # 17 skills
 │   ├── agents/                            # 5 subagents
 │   ├── hooks/devops-kit/                  # infra-context-guard.py
 │   └── settings.devops-kit.json           # permissions + hook (merged, not overwritten)
@@ -492,6 +492,18 @@ A long session is compacted many times, and each time some details can be lost. 
 - Claude reads `PROGRESS.md` at the start of a session and updates it after each task or important decision.
 - When you say "always …", "never …" or "remember …", Claude proposes a line for **Standing rules** in `CLAUDE.md`. You do not need to repeat the rule in every session.
 - Prefer one session per topic. Start a new session with: "Read CLAUDE.md and PROGRESS.md, then continue."
+
+**When to `/clear`, when to `/handoff` first:**
+
+| Situation | Do |
+|---|---|
+| Short task, done, nothing failed | `/clear` only. |
+| Long task, or an approach failed that must not be tried again, or you move to another machine or interface (VS Code ↔ Desktop app) | `/handoff`, check the change it shows, then `/clear`. |
+| Inside one task, the context gets heavy | `/compact` with a focus: `/compact keep the decisions and the failed attempts`. |
+
+- `/handoff` rewrites **Current state** and **Next steps**, adds the **Dead ends** of this session (each with `revisit if:`), and asks once before it writes. It reads an `/infra-task` folder through `plan_status.py` but never edits it. It checks the file's hash before it writes, so a change made from another session in the meantime is merged, not overwritten.
+- A fact about the live state carries `checked: <date>`. When the date is old, check it again before you act on it.
+- `/clear` and `/compact` do not delete the transcript: `/resume` opens an earlier conversation again. Claude Code deletes transcripts older than `cleanupPeriodDays` (default 30 days, without a message). Set it in `settings.json` if you need them longer; transcripts can hold secrets that a command printed.
 
 ---
 

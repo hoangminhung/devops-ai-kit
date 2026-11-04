@@ -2,6 +2,10 @@
 # Run the scenarios WITHOUT and WITH the kit, on one or more models, and write a comparison table.
 #
 #   scenarios/benchmark.sh --config-dir ~/.claude-bench [--models "opus sonnet"] [--scenarios "05 06"] [--out FILE]
+#   scenarios/benchmark.sh --config-dir ~/.claude-bench --continuity [--runs 3] [--models "opus"]
+#
+# --continuity runs only scenario 13 (continuity.sh), with the kit installed: /compact vs /handoff,
+# --runs times per method and model, and writes that comparison instead of the without/with-kit table.
 #
 # --config-dir is a SEPARATE Claude config dir that you logged in to once:
 #   CLAUDE_CONFIG_DIR=~/.claude-bench claude     # then /login, then /exit
@@ -15,13 +19,15 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 KIT="$(dirname "$HERE")"
-CONFIG_DIR="" MODELS="opus sonnet" SCENARIOS="" OUT=""
+CONFIG_DIR="" MODELS="opus sonnet" SCENARIOS="" OUT="" CONTINUITY="" RUNS_N=3
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --config-dir) CONFIG_DIR="$2"; shift 2 ;;
     --models) MODELS="$2"; shift 2 ;;
     --scenarios) SCENARIOS="$2"; shift 2 ;;
     --out) OUT="$2"; shift 2 ;;
+    --continuity) CONTINUITY=1; shift ;;
+    --runs) RUNS_N="$2"; shift 2 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -39,6 +45,7 @@ done
 for tool in jq python3; do
   command -v "$tool" >/dev/null || { echo "$tool is needed" >&2; exit 1; }
 done
+[[ "$RUNS_N" =~ ^[1-9][0-9]*$ ]] || { echo "--runs must be a positive number" >&2; exit 2; }
 if [[ -z "$SCENARIOS" ]]; then
   SCENARIOS="$(grep -l '^```check$' "$HERE"/[0-9][0-9]-*.md | xargs -n1 basename | cut -c1-2 | tr '\n' ' ')"
 fi
@@ -51,7 +58,7 @@ OUT="${OUT:-$HERE/.runs/benchmark-$STAMP.md}"
 mkdir -p "$(dirname "$OUT")"
 TSV="${OUT%.md}.tsv"
 RUNS="$(mktemp -d /tmp/devops-kit-bench.XXXXXX)"
-printf 'mode\tmodel\tscenario\tresult\tprompts\tcost\tturns\tcontext\tlog\n' > "$TSV"
+[[ -n "$CONTINUITY" ]] || printf 'mode\tmodel\tscenario\tresult\tprompts\tcost\tturns\tcontext\tlog\n' > "$TSV"
 
 uninstall_kit() { CLAUDE_CONFIG_DIR="$CONFIG_DIR" "$KIT/uninstall.sh" >/dev/null 2>&1 || true; }
 trap uninstall_kit EXIT
@@ -76,17 +83,37 @@ assert_no_kit() {
 }
 
 KIT_VERSION="$(cat "$KIT/VERSION")"
+install_kit() {
+  CLAUDE_CONFIG_DIR="$CONFIG_DIR" "$KIT/install.sh" --lang en >/dev/null
+  python3 - "$CONFIG_DIR/.devops-kit-manifest.json" "$KIT_VERSION" <<'PY'
+import json, sys
+installed = json.load(open(sys.argv[1])).get("kit_version")
+sys.exit(0 if installed == sys.argv[2] else f"installed kit {installed} is not this checkout ({sys.argv[2]})")
+PY
+}
+
+if [[ -n "$CONTINUITY" ]]; then
+  install_kit
+  read -r -a models <<<"$MODELS"
+  : > "$OUT"
+  for model in "${models[@]}"; do
+    tsv="${OUT%.md}-$model.tsv"
+    CLAUDE_CONFIG_DIR="$CONFIG_DIR" MODEL="$model" SCENARIO_RUNS_DIR="$RUNS" \
+      "$HERE/continuity.sh" --runs "$RUNS_N" --tsv "$tsv" 2>>"$RUNS/errors.log"
+    python3 "$HERE/continuity_report.py" "$tsv" --kit-version "$KIT_VERSION" --model "$model" >> "$OUT"
+  done
+  uninstall_kit
+  echo "Work copies and logs: $RUNS (errors: $RUNS/errors.log)" >&2
+  echo "$OUT"
+  exit 0
+fi
+
 run_mode() { # run_mode <nokit|kit>
   local mode="$1" model nn line result log m no_kit=""
   if [[ "$mode" == nokit ]]; then
     uninstall_kit; assert_no_kit; no_kit=1
   else
-    CLAUDE_CONFIG_DIR="$CONFIG_DIR" "$KIT/install.sh" --lang en >/dev/null
-    python3 - "$CONFIG_DIR/.devops-kit-manifest.json" "$KIT_VERSION" <<'PY'
-import json, sys
-installed = json.load(open(sys.argv[1])).get("kit_version")
-sys.exit(0 if installed == sys.argv[2] else f"installed kit {installed} is not this checkout ({sys.argv[2]})")
-PY
+    install_kit
   fi
   local models
   read -r -a models <<<"$MODELS"

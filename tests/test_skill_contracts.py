@@ -116,6 +116,40 @@ class ScoutTakeover(unittest.TestCase):
         self.assertIn("a confirmed line never relaxes a kit rule", rules)
 
 
+class Handoff(unittest.TestCase):
+    def setUp(self):
+        self.skill = (KIT_DIR / "claude/skills/handoff/SKILL.md").read_text(encoding="utf-8")
+
+    def test_runs_only_when_the_user_asks(self):
+        self.assertIn("disable-model-invocation: true", self.skill.split("---")[1])
+
+    def test_task_folders_are_read_only(self):
+        rules = section(self.skill, "## Rules")
+        self.assertIn("**Task folders are read-only here.** Never edit an `/infra-task` folder", rules)
+        self.assertIn("plan_status.py status", section(self.skill, "## Steps"))
+        self.assertNotIn("plan_status.py tick", self.skill)
+
+    def test_checks_the_hash_before_it_writes(self):
+        steps = section(self.skill, "## Steps")
+        self.assertIn("sha256sum", steps)
+        self.assertIn("Write only when the hash matches", steps)
+
+    def test_rebuilds_state_and_keeps_old_check_dates(self):
+        rules = section(self.skill, "## Rules")
+        self.assertIn("**Rebuild, do not copy forward.**", rules)
+        self.assertIn("keeps its old `checked:` date", rules)
+        self.assertIn("revisit if:", section(self.skill, "## Steps"))
+
+    def test_progress_template_and_core_rule_have_the_new_parts(self):
+        template = (KIT_DIR / "templates/PROGRESS.md").read_text(encoding="utf-8")
+        core = (KIT_DIR / "claude/rules/devops-kit/00-core.md").read_text(encoding="utf-8")
+        for part in ("## Next steps", "## Dead ends — do not retry", "## Open items", "## Done log"):
+            self.assertIn(part, template)
+        self.assertIn("revisit if:", template)
+        self.assertIn("(checked: <YYYY-MM-DD>)", template)
+        self.assertIn("**Dead ends — do not retry** (with `revisit if:`)", core)
+
+
 class Slicing(unittest.TestCase):
     def test_failed_slice_stops_later_slices(self):
         text = SLICING.read_text(encoding="utf-8")

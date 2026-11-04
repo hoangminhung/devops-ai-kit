@@ -1,0 +1,15 @@
+# Image tags of the shop services. Change them with tools/bump-tag.sh (see docs/RELEASE.md).
+defaults: &defaults
+  registry: registry.example.invalid/shop
+  pullPolicy: IfNotPresent
+
+services:
+  api:
+    <<: *defaults
+    tag: "1.4.1"
+  web:
+    <<: *defaults
+    tag: "2.0.0"
+  worker:
+    <<: *defaults
+    tag: "0.9.6"
