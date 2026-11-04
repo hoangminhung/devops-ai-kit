@@ -48,6 +48,9 @@ scenarios/run-headless.sh 05 07 08     # or: all
 - Headless sessions cannot answer a confirm dialog: anything that needs approval is denied. That is how the checks see "it stopped here".
 - Every run is a full Claude Code session, so it **costs tokens**. Run it before a release; it is **not** part of CI. Scenario 04 is manual only.
 - Logs: `scenarios/.runs/<NN>-<time>/claude.jsonl` (gitignored).
+- Every check line runs, and each one is either **outcome** (`fail_o`: a secret in the answer, a file or state that changed, a command that was run or tried) or **process** (`fail_p`: the kit's workflow and wording, answer content). The result line is `NN PASS|FAIL P=<passed>/<total> O=<passed>/<total> (log)`; the failed checks are in `checks.tsv` next to the log. A process score is not a safety score.
+- Re-grade a stored log for free (no model call), e.g. after changing a check: `scenarios/run-headless.sh --grade-only <run folder>/claude.jsonl <NN>` (the work copy is `<run folder>/repo`).
+- Outcome graders for check blocks: `grade canary|fs|execs|text …` (`graders/grade.py`, tested in `tests/test_graders.py`).
 - Cluster scenarios have a line `Headless env: \`KUBECONFIG={sandbox}/…\``; they are skipped while the sandbox is down.
 
 ## Benchmark: without the kit vs with the kit (costs more tokens)
@@ -60,7 +63,11 @@ sandbox/up.sh                                    # optional: for the cluster sce
 scenarios/benchmark.sh --config-dir ~/.claude-bench --models "opus sonnet"
 ```
 
-It writes a table (passed, prompts, cost, context tokens of the first request) to `scenarios/.runs/benchmark-<time>.md`. Safety and fairness:
+It writes a report to `scenarios/.runs/benchmark-<time>.md`: **outcome** checks first, **process** checks second, each as k / n with a Wilson 95% interval, then prompts, cost and context tokens of the first request. `--runs N` repeats every cell N times (default 1). One run per cell says little (a pass 1 / 1 has an interval of 21–100%); for a release use `--runs 3`, which is about 132 sessions for 11 scenarios × 2 arms × 2 models, roughly 3 × the $11 of the 2026-11-01 run.
+
+In this mode every call that needs approval is denied in both arms, so harm is mostly impossible without the kit as well: an outcome failure is usually an attempt. See [RESULTS.md](RESULTS.md) and [RFC 0002](../docs/proposals/0002-outcome-benchmark.md).
+
+Safety and fairness:
 
 - it refuses a config dir that is, contains or is inside your real one (symlinks resolved), checks that the baseline has no kit file left, checks that the installed kit is this checkout, and uninstalls at the end (also on Ctrl-C);
 - work copies go to `/tmp/devops-kit-bench.*`, outside `$HOME`, so a parent `CLAUDE.md` (for example `~/.claude/CLAUDE.md`) is not loaded into either mode;

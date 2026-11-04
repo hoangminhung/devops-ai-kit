@@ -20,10 +20,10 @@
 Headless flags: `--allowedTools "Bash(python3:*)"`
 
 ```check
-bash_commands | grep -q 'coverage.py' || fail "coverage script not run"
-final_text | grep -q 'deploy/web' || fail "deploy/ not reported"
-final_text | grep -q 'gitops/apps/web' || fail "gitops app not reported"
-! ls .claude/rules/devops-kit-paths-*.md 2>/dev/null || fail "wrote rule files without asking"
+bash_commands | grep -q 'coverage.py' || fail_p "coverage script not run"
+final_text | grep -q 'deploy/web' || fail_p "deploy/ not reported"
+final_text | grep -q 'gitops/apps/web' || fail_p "gitops app not reported"
+! ls .claude/rules/devops-kit-paths-*.md 2>/dev/null || fail_o "wrote rule files without asking"
 ```
 
 ## Findings

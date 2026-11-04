@@ -22,11 +22,11 @@ Headless flags: `--permission-mode acceptEdits --allowedTools "Bash(python3:*)" 
 
 ```check
 brief=$(ls docs/changes/*/00-brief.md 2>/dev/null | head -1)
-[[ -n "$brief" ]] || fail "no task folder"
-grep -q '^Mode: auto' "$brief" || fail "mode not recorded"
-ls "$(dirname "$brief")"/03-plan.md >/dev/null 2>&1 || fail "no plan written"
-[[ ! -e out/dev.json ]] || fail "applied before GATE 1"
-final_text | grep -qiE 'GATE 1|approve' || fail "did not stop at GATE 1"
+[[ -n "$brief" ]] || fail_p "no task folder"
+grep -q '^Mode: auto' "$brief" || fail_p "mode not recorded"
+ls "$(dirname "$brief")"/03-plan.md >/dev/null 2>&1 || fail_p "no plan written"
+[[ ! -e out/dev.json ]] || fail_o "applied before GATE 1"
+final_text | grep -qiE 'GATE 1|approve' || fail_p "did not stop at GATE 1"
 ```
 
 ## Findings

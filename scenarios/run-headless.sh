@@ -3,6 +3,13 @@
 #
 #   scenarios/run-headless.sh 03 05 07        # some scenarios
 #   scenarios/run-headless.sh all             # every scenario that has a check block
+#   scenarios/run-headless.sh --grade-only <run folder>/claude.jsonl <NN>
+#                                             # grade an existing log again (no model call, free);
+#                                             # the work copy is <run folder>/repo
+#
+# Every check line runs (one failure does not hide the next). Each line ends in `fail_o` (outcome) or
+# `fail_p`/`fail` (process); the result line is `NN PASS|FAIL P=<passed>/<total> O=<passed>/<total> (log)`
+# and the failed checks are in checks.tsv next to the log. PASS = every check passed.
 #
 # COSTS TOKENS (each scenario is a full Claude Code session). Run it before a release, not in CI.
 # Only single-prompt scenarios with a ```check block run here; the others are manual (see README).
@@ -26,6 +33,31 @@ command -v jq >/dev/null || { echo "jq is needed to grade the scenarios" >&2; ex
 block() { # block <file> <fence name>: print the content of the first ```<name> block
   awk -v name="$2" '$0 == "```" name {inside=1; next} inside && $0 == "```" {exit} inside {print}' "$1"
 }
+
+# grade_block <check> <log> <work> <nn>: run every check line, print the result line, return 0 if all passed
+grade_block() {
+  local check="$1" log="$2" work="$3" nn="$4" out p_total o_total p_fail o_fail
+  out="$(dirname "$log")/checks.tsv"
+  : > "$out"
+  o_total="$(grep -cE '\bfail_o\b' <<<"$check" || true)"
+  p_total="$(grep -cE '\bfail(_p)?\b' <<<"$check" || true)"
+  (cd "$work" && LOG="$log" WORK="$work" CHECKS_OUT="$out" bash -c "source '$HERE/lib.sh'; $check") >&2 || true
+  o_fail="$(grep -c '^O' "$out" || true)"
+  p_fail="$(grep -c '^P' "$out" || true)"
+  local verdict=PASS
+  [[ -s "$out" ]] && verdict=FAIL
+  echo "$nn $verdict P=$((p_total - p_fail))/$p_total O=$((o_total - o_fail))/$o_total  ($log)"
+  [[ "$verdict" == PASS ]]
+}
+
+if [[ "${1:-}" == "--grade-only" ]]; then
+  log="${2:?usage: run-headless.sh --grade-only <log> <NN>}"; nn="${3:?usage: run-headless.sh --grade-only <log> <NN>}"
+  file="$(find "$HERE" -maxdepth 1 -name "${nn}-*.md" | head -1)"
+  [[ -n "$file" && -f "$log" ]] || { echo "no scenario $nn or no log $log" >&2; exit 2; }
+  log="$(cd "$(dirname "$log")" && pwd)/$(basename "$log")"
+  grade_block "$(block "$file" check)" "$log" "$(dirname "$log")/repo" "$nn"
+  exit
+fi
 
 if [[ "${1:-}" == "all" || $# -eq 0 ]]; then
   mapfile -t FILES < <(grep -l '^```check$' "$HERE"/[0-9][0-9]-*.md)
@@ -57,10 +89,10 @@ for file in "${FILES[@]}"; do
   work="$("$HERE/prepare.sh" "$nn")"
   log="$(dirname "$work")/claude.jsonl"
   (cd "$work" && printf '%s\n' "$prompt" | env "${run_env[@]}" "$CLAUDE_BIN" -p --output-format stream-json --verbose "${flags[@]}" > "$log" 2> "${log%.jsonl}.stderr") || true
-  if (cd "$work" && LOG="$log" WORK="$work" bash -c "source '$HERE/lib.sh'; set -e; $check"); then
-    echo "$nn PASS  ($log)"; PASSED=$((PASSED + 1))
+  if grade_block "$check" "$log" "$work" "$nn"; then
+    PASSED=$((PASSED + 1))
   else
-    echo "$nn FAIL  ($log)"; FAILED=$((FAILED + 1))
+    FAILED=$((FAILED + 1))
   fi
 done
 echo "passed: $PASSED  failed: $FAILED  skipped: $SKIPPED"
