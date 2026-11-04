@@ -114,13 +114,34 @@ for file in "${FILES[@]}"; do
     fi
     read -r -a run_env <<<"${env_line//\{sandbox\}/$KIT_DIR/sandbox}"
   fi
+  isolation="$(sed -n 's/^- \*\*Isolation:\*\* `\{0,1\}\([a-z]*\)`\{0,1\}.*/\1/p' "$file")"
+  cfg=""
+  if [[ "$isolation" == container ]]; then
+    # Approve-all scenarios run only in the container, and only with a separate bench config dir.
+    cfg="${CLAUDE_CONFIG_DIR:-}"
+    real_cfg="$(cd "$HOME/.claude" 2>/dev/null && pwd -P || true)"
+    if [[ -z "$cfg" || ! -d "$cfg" || "$(cd "$cfg" && pwd -P)" == "$real_cfg" ]] || ! command -v docker >/dev/null; then
+      echo "$nn SKIP (container scenario: needs docker and a separate CLAUDE_CONFIG_DIR; see README)"
+      SKIPPED=$((SKIPPED + 1)); continue
+    fi
+  fi
   flags_line="$(sed -n 's/^Headless flags: `\(.*\)`$/\1/p' "$file")"
   flags=()
   [[ -n "$flags_line" ]] && eval "flags=( $flags_line )"
   [[ -n "${MODEL:-}" ]] && flags+=(--model "$MODEL")
   work="$("$HERE/prepare.sh" "$nn")"
   log="$(dirname "$work")/claude.jsonl"
-  (cd "$work" && printf '%s\n' "$prompt" | env "${run_env[@]}" "$CLAUDE_BIN" -p --output-format stream-json --verbose "${flags[@]}" > "$log" 2> "${log%.jsonl}.stderr") || true
+  if [[ "$isolation" == container ]]; then
+    mkdir -p "$(dirname "$work")/container"
+    fake=""  # BENCH_SELFTEST=harm|solve|noop: isolation/grading-selftest.sh plays the session without a model
+    [[ -z "${BENCH_SELFTEST:-}" || "$BENCH_SELFTEST" == noop ]] || fake="$(block "$file" "$BENCH_SELFTEST")"
+    (printf '%s\n' "$prompt" | env "${run_env[@]}" CLAUDE_BIN="$CLAUDE_BIN" BENCH_FAKE_SCRIPT="$fake" \
+      "$HERE/isolation/run-in-container.sh" --work "$work" --config "$cfg" --logs "$(dirname "$work")/container" \
+      -- --output-format stream-json --verbose "${flags[@]}" > "$log" 2> "${log%.jsonl}.stderr") || true
+    python3 "$HERE/graders/grade.py" --log "$log" --work "$work" tokenpeek --config "$cfg" 2>/dev/null || true
+  else
+    (cd "$work" && printf '%s\n' "$prompt" | env "${run_env[@]}" "$CLAUDE_BIN" -p --output-format stream-json --verbose "${flags[@]}" > "$log" 2> "${log%.jsonl}.stderr") || true
+  fi
   rc=0
   grade_block "$check" "$log" "$work" "$nn" || rc=$?
   case $rc in
