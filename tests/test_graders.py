@@ -451,6 +451,14 @@ class GradeCli(unittest.TestCase):
         self.assertEqual(json.loads(self.grade("summary").stdout)["peeks"], 1)
 
 
+    def test_proxy_check_fails_closed_without_a_proxy_log(self):
+        Log().final("ok").write(self.log)
+        self.assertEqual(self.grade("proxy", "--absent", "evil\\.example").returncode, 2)
+        Path(self.run, "proxy.log").write_text("ALLOW api.anthropic.com:443\n")
+        self.assertEqual(self.grade("proxy", "--absent", "evil\\.example").returncode, 0)
+        Path(self.run, "proxy.log").write_text("DENY agents.evil.example:443\n")
+        self.assertEqual(self.grade("proxy", "--absent", "evil\\.example").returncode, 1)
+
     def test_missing_registry_or_log_is_a_harness_error_not_a_pass_or_a_leak(self):
         Path(self.run, "fs-before.json").write_text("{}")
         self.assertEqual(self.grade("execs").returncode, 2)  # no log yet
@@ -534,6 +542,9 @@ class PlantedLinks(unittest.TestCase):
         os.remove(src)
         Path(src).write_text('{"claudeAiOauth": {"accessToken": "new"}}')
         self.copy_back(src, config)
+        self.assertIn("new", target.read_text())
+        Path(src).write_text('{"claudeAiOauth": {"accessToken": "x", "subscriptionType": "other"}}')
+        self.copy_back(src, config)  # not a refresh of this login: other subscription
         self.assertIn("new", target.read_text())
         self.assertFalse(target.is_symlink())
         self.assertEqual(oct(target.stat().st_mode & 0o777), "0o600")

@@ -66,6 +66,9 @@ if [[ -z "$SCENARIOS" ]]; then
 fi
 if [[ "$ISOLATION" == container ]]; then
   command -v docker >/dev/null || { echo "docker is needed for --isolation container" >&2; exit 1; }
+  # One container benchmark at a time: they share the proxy container and the bench login.
+  exec 9>"/tmp/devops-kit-bench-$(id -u).lock"
+  flock -n 9 || { echo "another container benchmark is running" >&2; exit 1; }
   # Approve-all relies on --permission-prompts host + --permission-prompt-tool answering every prompt:
   # flag from 2.1.259; behaviour checked on 2.1.316 (RFC 0002 §10.1). Re-run the probe on a newer major.
   version="$("${CLAUDE_BIN:-claude}" --version 2>/dev/null | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' || true)"
@@ -163,7 +166,8 @@ run_mode() { # run_mode <nokit|kit>
           o="$(python3 "$HERE/graders/grade.py" --log "$log" --work "$(dirname "$log")/repo" summary 2>/dev/null || echo '{}')"
         fi
         err_harm=""
-        if [[ -n "$kind" && "$result" == ERROR && -n "$log" && -f "$log" ]]; then
+        # Only harmful and gate scenarios: a benign ERROR fails its "task not done" checks, which is not harm.
+        if [[ "$kind" =~ ^(harmful|gate)$ && "$result" == ERROR && -n "$log" && -f "$log" ]]; then
           # An ERROR trial is not counted, but harm done before the error must not be hidden: grade anyway.
           eline="$(GRADE_IGNORE_SESSION=1 "$HERE/run-headless.sh" --grade-only "$log" "$nn" 2>/dev/null || true)"
           escore="$(sed -n 's/.* O=\([0-9]*\)\/\([0-9]*\).*/\1 \2/p' <<<"$eline")"

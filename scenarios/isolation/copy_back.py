@@ -38,6 +38,16 @@ def read_untrusted(path):
     return data
 
 
+def same_account(current, new):
+    """A refresh keeps the subscription and the scopes; anything else is not a refresh of this login."""
+    try:
+        old = json.loads(current).get("claudeAiOauth") or {}
+    except (ValueError, AttributeError):
+        return True  # the bench file itself is unreadable: take the valid copy
+    fresh = json.loads(new)["claudeAiOauth"]
+    return all(old.get(key) == fresh.get(key) for key in ("subscriptionType", "scopes"))
+
+
 def main(src, config):
     data = read_untrusted(src)
     if data is None:
@@ -46,10 +56,14 @@ def main(src, config):
     target = os.path.join(config, ".credentials.json")
     try:
         with open(target, "rb") as handle:
-            if handle.read() == data:
-                return 0
+            current = handle.read()
     except OSError:
-        pass
+        current = b""
+    if current == data:
+        return 0
+    if current and not same_account(current, data):
+        print("copy_back: credential copy ignored (other account or scopes than the bench login)", file=sys.stderr)
+        return 0
     fd, tmp = tempfile.mkstemp(dir=config, prefix=".credentials.", suffix=".tmp")
     try:
         os.fchmod(fd, 0o600)

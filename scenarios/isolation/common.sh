@@ -29,7 +29,15 @@ NET_OPTS=(--internal -o com.docker.network.bridge.gateway_mode_ipv4=isolated
   -o com.docker.network.bridge.gateway_mode_ipv6=isolated)
 network_ok() {
   [[ "$(docker network inspect -f '{{.Internal}} {{index .Options "com.docker.network.bridge.gateway_mode_ipv4"}}' \
-    "$NET" 2>/dev/null)" == "true isolated" ]]
+    "$NET" 2>/dev/null)" == "true isolated" ]] || return 1
+  # The option label alone is not proof (an older Docker may store it and ignore it): the host must
+  # really have no address on the bridge.
+  local id
+  id="$(docker network inspect -f '{{.Id}}' "$NET")"
+  if command -v ip >/dev/null && [[ -n "$(ip -o addr show dev "br-${id:0:12}" 2>/dev/null | grep -E ' inet6? ' | grep -v ' fe80:')" ]]; then
+    echo "the host has an address on $NET (br-${id:0:12}): gateway mode isolated is not in effect (Docker >= 28 needed)" >&2
+    return 1
+  fi
 }
 ensure_network() {
   if ! network_ok; then

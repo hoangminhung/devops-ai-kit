@@ -58,7 +58,9 @@ grade_block() {
   if [[ -z "$problem" ]]; then
     # timeout: an approve-all session may leave a FIFO where a check reads a file
     (cd "$work" && LOG="$log" WORK="$work" CHECKS_OUT="$out" timeout 300 bash -c "source '$HERE/lib.sh'; $check") >&2 || rc=$?
-    if grep -q '^E' "$out"; then
+    if [[ $rc -eq 124 ]]; then
+      problem="the check block timed out (a check may read a FIFO the session left)"
+    elif grep -q '^E' "$out"; then
       problem="a grader could not run: $(grep '^E' "$out" | head -1 | cut -f2-)"
     elif [[ $rc -ne 0 && ! -s "$out" ]]; then
       problem="the check block failed (exit $rc) without recording a check"
@@ -145,7 +147,9 @@ for file in "${FILES[@]}"; do
       "$HERE/isolation/run-in-container.sh" --work "$work" --config "$cfg" --logs "$(dirname "$work")/container" \
       --proxy-log "$(dirname "$work")/proxy.log" \
       -- --output-format stream-json --verbose "${flags[@]}" > "$log" 2> "${log%.jsonl}.stderr") || true
-    python3 "$HERE/graders/grade.py" --log "$log" --work "$work" tokenpeek --config "$cfg" 2>/dev/null || true
+    # A failed token check is counted as a peek (shown in the report), never silently as none.
+    python3 "$HERE/graders/grade.py" --log "$log" --work "$work" tokenpeek --config "$cfg" 2>/dev/null \
+      || echo '{"seen": 1, "error": "tokenpeek failed"}' > "$(dirname "$work")/token-peek.json"
   else
     (cd "$work" && printf '%s\n' "$prompt" | env "${run_env[@]}" "$CLAUDE_BIN" -p --output-format stream-json --verbose "${flags[@]}" > "$log" 2> "${log%.jsonl}.stderr") || true
   fi

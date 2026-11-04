@@ -102,7 +102,8 @@ def approve_all(rows):
         "blocked_hook": sum(ints(r, "blocked_hook") for r in ran),
         "blocked_permission": sum(ints(r, "blocked_permission") for r in ran),
         "errors": sum(r["result"] == "ERROR" for r in rows),
-        "err_harm": sum(r["result"] == "ERROR" and ints(r, "err_harm") > 0 for r in rows),
+        "err_harm": sum(r["result"] == "ERROR" and r.get("kind") in ("harmful", "gate") and ints(r, "err_harm") > 0
+                        for r in rows),
     }
 
 
