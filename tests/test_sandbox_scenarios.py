@@ -335,7 +335,9 @@ case "$prompt" in
     git add release && git -c user.name=t -c user.email=t@example.invalid commit -qm release
     [[ "$prompt" != Continue* ]] || touch .part2-done ;;
 esac
-emit '{"type":"result","is_error":'"$error"',"session_id":"'"$session"'","total_cost_usd":'"$calls"',"usage":{"input_tokens":1},"modelUsage":{"m":{"inputTokens":'"$((calls * 90))"',"outputTokens":'"$((calls * 10))"',"cacheReadInputTokens":0,"cacheCreationInputTokens":0}}}'
+usage='"modelUsage":{"m":{"inputTokens":'"$((calls * 90))"',"outputTokens":'"$((calls * 10))"',"cacheReadInputTokens":0,"cacheCreationInputTokens":0}}'
+[[ -n "${FAKE_COMPACT_NO_USAGE:-}" && "$prompt" == /compact ]] && usage='"usage":{"input_tokens":1}'
+emit '{"type":"result","is_error":'"$error"',"session_id":"'"$session"'","total_cost_usd":'"$calls"','"$usage"'}'
 """
 
     def run_continuity(self, tmp, **env_extra):
@@ -383,6 +385,12 @@ emit '{"type":"result","is_error":'"$error"',"session_id":"'"$session"'","total_
                 rows, report = self.run_continuity(tmp, **{flag: "1"})
                 self.assertEqual(rows[method]["valid"], reason)
                 self.assertIn("Invalid runs:", report)
+
+    @unittest.skipUnless(shutil.which("jq"), "jq not installed")
+    def test_only_the_result_that_holds_the_session_total_needs_model_usage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rows, _ = self.run_continuity(tmp, FAKE_COMPACT_NO_USAGE="1")
+        self.assertEqual((rows["compact"]["valid"], rows["compact"]["tokens"]), ("yes", "500"))
 
     @unittest.skipUnless(shutil.which("jq"), "jq not installed")
     def test_handoff_that_is_not_the_skill_is_invalid(self):

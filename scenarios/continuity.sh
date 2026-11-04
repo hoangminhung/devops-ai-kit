@@ -81,12 +81,12 @@ totals() {
       | ($e | map(select(.type=="system" and .subtype=="init")) | first | .session_id // "?") as $s
       | ($e | map(select(.type=="result")) | last) as $r
       | select($r != null)
-      | {s: ($r.session_id // $s), cost: ($r.total_cost_usd // 0),
+      | {s: ($r.session_id // $s), cost: ($r.total_cost_usd // 0), known: ($r.modelUsage != null),
          tokens: ([$r.modelUsage // {} | .[] | (.inputTokens // 0) + (.outputTokens // 0)
                    + (.cacheReadInputTokens // 0) + (.cacheCreationInputTokens // 0)] | add // 0)}' "$log"
-  done | jq -rs 'group_by(.s) | map(max_by(.cost)) | "\(map(.tokens) | add // 0)\t\(map(.cost) | add // 0)"'
+  done | jq -rs 'group_by(.s) | map(max_by(.cost))
+    | "\(map(.tokens) | add // 0)\t\(map(.cost) | add // 0)\t\(map(select(.known | not)) | length)"'
 }
-has_model_usage() { jq -seR '[split("\n")[] | fromjson? // empty | select(.type=="result")] | last | .modelUsage != null' "$1" >/dev/null; }
 # ran_skill <log> <name>: the session offered the skill as a slash command, so "/<name>" ran it
 # (an unknown "/<name>" would reach the model as plain text)
 ran_skill() { jq -seR --arg n "$2" '[split("\n")[] | fromjson? // empty | select(.type=="system" and .subtype=="init")]
@@ -125,12 +125,13 @@ for method in $METHODS; do
     done
     for log in "$LOGS"/c[0-9][0-9]-*.jsonl; do
       call_ok "$log" || invalid "call $(basename "$log" .jsonl) failed or gave no result"
-      has_model_usage "$log" || invalid "call $(basename "$log" .jsonl) has no modelUsage (tokens unknown)"
     done
     planted="$( [[ "$(inplace_runs "$(log_of part1)")" -ge 1 ]] && echo yes || echo no )"
     retries="$(inplace_runs "$(log_of part2)" "$(log_of part3)")"
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$method" "$run" "$planted" "$retries" "$next_ok" "$saved" \
-      "$(totals)" "$valid" "$CLAUDE_VERSION" "$LOGS" >> "$TSV"
+    IFS=$'\t' read -r tokens cost unknown <<<"$(totals)"
+    [[ "$unknown" == 0 ]] || invalid "the session total has no modelUsage (tokens unknown)"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$method" "$run" "$planted" "$retries" "$next_ok" "$saved" \
+      "$tokens" "$cost" "$valid" "$CLAUDE_VERSION" "$LOGS" >> "$TSV"
     echo "continuity $method run $run: planted=$planted retries=$retries next_ok=$next_ok/2 valid=$valid" >&2
   done
 done
