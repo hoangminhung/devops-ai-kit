@@ -308,15 +308,19 @@ class Continuity(unittest.TestCase):
     and a result reports the session's running totals. Per call it costs 1.0 and 100 tokens. It does the task
     (retrying --inplace once per part unless FAKE_NO_INPLACE), commits, writes PROGRESS.md when /handoff is
     confirmed (only the first time with FAKE_HANDOFF_ONCE), marks /compact (unless FAKE_NO_COMPACT), and ends
-    /handoff with an error result when FAKE_HANDOFF_ERROR is set."""
+    /handoff with an error result when FAKE_HANDOFF_ERROR is set. FAKE_NO_SKILL leaves handoff out of the init's
+    slash_commands, FAKE_CRASH_PART3 ends the part-3 call after init (no result), FAKE_VERSION sets --version."""
     FAKE_CLAUDE = r"""#!/usr/bin/env bash
+[[ "$1" == --version ]] && { echo "${FAKE_VERSION:-2.1.316} (Claude Code)"; exit 0; }
 prompt="$(cat)" session=""
 while [[ $# -gt 0 ]]; do [[ "$1" == --resume ]] && { session="$2"; shift; }; shift; done
 [[ -n "$session" ]] || session="s-$RANDOM$RANDOM"
 calls=$(( $(cat "$FAKE_STATE/$session" 2>/dev/null || echo 0) + 1 )); echo "$calls" > "$FAKE_STATE/$session"
 emit() { printf '%s\n' "$1"; }
 bash_use() { emit "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{\"command\":\"$1\"}}]}}"; }
-emit '{"type":"system","subtype":"init","session_id":"'"$session"'"}'
+commands='"compact","handoff"'; [[ -z "${FAKE_NO_SKILL:-}" ]] || commands='"compact"'
+emit '{"type":"system","subtype":"init","session_id":"'"$session"'","slash_commands":['"$commands"']}'
+[[ -n "${FAKE_CRASH_PART3:-}" && "$prompt" == Continue* && -f .part2-done ]] && exit 1
 error=false
 case "$prompt" in
   /compact) [[ -n "${FAKE_NO_COMPACT:-}" ]] || emit '{"type":"system","subtype":"compact_boundary"}' ;;
@@ -328,7 +332,8 @@ case "$prompt" in
     if [[ "$prompt" == We\ release* ]]; then tools/bump-tag.sh api 1.4.2 --patch >/dev/null
     elif grep -q '"2.0.0"' release/tags.yaml; then tools/bump-tag.sh web 2.0.1 --patch >/dev/null
     else tools/bump-tag.sh worker 0.9.7 --patch >/dev/null; fi
-    git add release && git -c user.name=t -c user.email=t@example.invalid commit -qm release ;;
+    git add release && git -c user.name=t -c user.email=t@example.invalid commit -qm release
+    [[ "$prompt" != Continue* ]] || touch .part2-done ;;
 esac
 emit '{"type":"result","is_error":'"$error"',"session_id":"'"$session"'","total_cost_usd":'"$calls"',"usage":{"input_tokens":1},"modelUsage":{"m":{"inputTokens":'"$((calls * 90))"',"outputTokens":'"$((calls * 10))"',"cacheReadInputTokens":0,"cacheCreationInputTokens":0}}}'
 """
@@ -358,6 +363,7 @@ emit '{"type":"result","is_error":'"$error"',"session_id":"'"$session"'","total_
         self.assertEqual(rows["handoff"]["saved"], "yes")
         self.assertIn("| dead-end retries in parts 2–3 (total) | 2 in 1 runs | 2 in 1 runs |", report)
         self.assertIn("| parts 2–3 that did the right next step | 2 / 2 | 2 / 2 |", report)
+        self.assertIn("Claude Code: 2.1.316.", report)
 
     @unittest.skipUnless(shutil.which("jq"), "jq not installed")
     def test_resumed_calls_are_not_counted_twice(self):
@@ -377,6 +383,30 @@ emit '{"type":"result","is_error":'"$error"',"session_id":"'"$session"'","total_
                 rows, report = self.run_continuity(tmp, **{flag: "1"})
                 self.assertEqual(rows[method]["valid"], reason)
                 self.assertIn("Invalid runs:", report)
+
+    @unittest.skipUnless(shutil.which("jq"), "jq not installed")
+    def test_handoff_that_is_not_the_skill_is_invalid(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rows, _ = self.run_continuity(tmp, FAKE_NO_SKILL="1")
+        self.assertEqual(rows["handoff"]["valid"], "no (/handoff before part 2 was not the installed skill)")
+
+    @unittest.skipUnless(shutil.which("jq"), "jq not installed")
+    def test_a_crashed_last_call_keeps_the_sessions_spend(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rows, _ = self.run_continuity(tmp, FAKE_CRASH_PART3="1")
+        self.assertEqual(float(rows["compact"]["cost"]), 4.0)  # 5 calls, the last one gave no result
+        self.assertTrue(rows["compact"]["valid"].startswith("no (call c05-part3 failed"))
+
+    def test_refuses_a_claude_older_than_running_totals(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            claude = Path(tmp, "claude")
+            claude.write_text(self.FAKE_CLAUDE)
+            claude.chmod(0o755)
+            result = subprocess.run([str(SCENARIOS / "continuity.sh"), "--tsv", str(Path(tmp, "c.tsv"))],
+                                    env=dict(os.environ, CLAUDE_BIN=str(claude), FAKE_VERSION="2.1.276"),
+                                    capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("2.1.276 is too old", result.stderr)
 
     @unittest.skipUnless(shutil.which("jq"), "jq not installed")
     def test_retries_count_only_where_the_dead_end_was_met(self):

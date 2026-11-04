@@ -42,7 +42,8 @@ def report(rows, kit_version="?", model="default"):
     sums = {key: summary([r for r in rows if r["method"] == key]) for key, _ in METHODS}
     lines = [
         "# Continuity: /compact vs /handoff (scenario 13)", "",
-        f"Kit version: {kit_version}. Model: {model}. Both methods run with the kit installed, so method A may "
+        f"Kit version: {kit_version}. Model: {model}. "
+        f"Claude Code: {', '.join(sorted({r.get('claude') or '?' for r in rows}))}. Both methods run with the kit installed, so method A may "
         "also keep notes in the progress file (`00-core` §9): it is \"/compact + kit\", not plain `/compact`.",
         "Only valid runs are counted: every call ended with a result, part 1 released api, method A shows a "
         "`compact_boundary` after each `/compact`, and in method B each handoff changed the progress file. "

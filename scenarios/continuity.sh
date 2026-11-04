@@ -28,6 +28,11 @@ done
 CLAUDE_BIN="${CLAUDE_BIN:-$(command -v claude || true)}"
 [[ -x "$CLAUDE_BIN" ]] || { echo "claude not found: set CLAUDE_BIN" >&2; exit 1; }
 command -v jq >/dev/null || { echo "jq is needed" >&2; exit 1; }
+# Since 2.1.277 a resumed -p call reports the session's running totals; older versions start at 0, and the
+# "last result per session" totals below would be too low (agent-sdk/cost-tracking).
+CLAUDE_VERSION="$("$CLAUDE_BIN" --version 2>/dev/null </dev/null | awk '{print $1}')"
+[[ "$(printf '%s\n' 2.1.277 "${CLAUDE_VERSION:-0}" | sort -V | head -1)" == 2.1.277 ]] \
+  || { echo "Claude Code ${CLAUDE_VERSION:-?} is too old: 2.1.277 or later is needed for the cost totals" >&2; exit 1; }
 
 SCENARIO="$HERE/13-continuity.md"
 block() { awk -v name="$1" '$0 == "```" name {inside=1; next} inside && $0 == "```" {exit} inside {print}' "$SCENARIO"; }
@@ -67,23 +72,27 @@ tag_of() { awk -v svc="  $1:" '/^  [a-z]+:$/ { inside = ($0 == svc) } inside && 
 tags() { echo "$(tag_of api) $(tag_of web) $(tag_of worker)"; }
 committed() { git -C "$WORK" diff --quiet HEAD -- release/tags.yaml; }
 progress_hash() { if [[ -f "$WORK/PROGRESS.md" ]]; then sha256sum "$WORK/PROGRESS.md" | cut -c1-64; else echo none; fi; }
-# totals: tokens and cost of the run. A resumed call's result already holds the session's earlier spend
-# (agent-sdk/cost-tracking), so take the LAST result of each session, then add up the sessions.
-# Tokens come from modelUsage (includes subagents); `usage` only when modelUsage is missing.
+# totals: tokens and cost of the run. A resumed call's result already holds the session's running totals
+# (agent-sdk/cost-tracking), so keep the highest total of each session (a failed last call can report less
+# or nothing), then add up the sessions. Tokens come from modelUsage, which also counts subagents.
 totals() {
   for log in "$LOGS"/c[0-9][0-9]-*.jsonl; do
     jq -scR '[split("\n")[] | fromjson? // empty] as $e
       | ($e | map(select(.type=="system" and .subtype=="init")) | first | .session_id // "?") as $s
-      | ($e | map(select(.type=="result")) | last // {}) as $r
+      | ($e | map(select(.type=="result")) | last) as $r
+      | select($r != null)
       | {s: ($r.session_id // $s), cost: ($r.total_cost_usd // 0),
-         tokens: (if $r.modelUsage then ([$r.modelUsage[] | (.inputTokens // 0) + (.outputTokens // 0)
-                    + (.cacheReadInputTokens // 0) + (.cacheCreationInputTokens // 0)] | add // 0)
-                  else ($r.usage // {} | (.input_tokens // 0) + (.output_tokens // 0)
-                    + (.cache_read_input_tokens // 0) + (.cache_creation_input_tokens // 0)) end)}' "$log"
-  done | jq -rs 'reduce .[] as $c ({}; .[$c.s] = $c) | [.[]] | "\(map(.tokens) | add // 0)\t\(map(.cost) | add // 0)"'
+         tokens: ([$r.modelUsage // {} | .[] | (.inputTokens // 0) + (.outputTokens // 0)
+                   + (.cacheReadInputTokens // 0) + (.cacheCreationInputTokens // 0)] | add // 0)}' "$log"
+  done | jq -rs 'group_by(.s) | map(max_by(.cost)) | "\(map(.tokens) | add // 0)\t\(map(.cost) | add // 0)"'
 }
+has_model_usage() { jq -seR '[split("\n")[] | fromjson? // empty | select(.type=="result")] | last | .modelUsage != null' "$1" >/dev/null; }
+# ran_skill <log> <name>: the session offered the skill as a slash command, so "/<name>" ran it
+# (an unknown "/<name>" would reach the model as plain text)
+ran_skill() { jq -seR --arg n "$2" '[split("\n")[] | fromjson? // empty | select(.type=="system" and .subtype=="init")]
+  | first | (.slash_commands // []) | index($n) != null' "$1" >/dev/null; }
 
-[[ -s "$TSV" ]] || printf 'method\trun\tplanted\tretries\tnext_ok\tsaved\ttokens\tcost\tvalid\tlogs\n' > "$TSV"
+[[ -s "$TSV" ]] || printf 'method\trun\tplanted\tretries\tnext_ok\tsaved\ttokens\tcost\tvalid\tclaude\tlogs\n' > "$TSV"
 for method in $METHODS; do
   for run in $(seq 1 "$RUNS_PER_METHOD"); do
     WORK="$(SCENARIO_RUNS_DIR="${SCENARIO_RUNS_DIR:-$HERE/.runs}" "$HERE/prepare.sh" 13 2>/dev/null | tail -1)"
@@ -101,9 +110,10 @@ for method in $METHODS; do
       else
         hash="$(progress_hash)"
         ask "handoff$part" "$SESSION" "/handoff"
+        ran_skill "$(log_of "handoff$part")" handoff || invalid "/handoff before part $part was not the installed skill"
         ask "confirm$part" "$SESSION" "$CONFIRM"
         [[ "$(progress_hash)" != "$hash" && "$(progress_hash)" != none ]] || invalid "handoff before part $part wrote nothing"
-        [[ $part != 2 ]] || { grep -q 'revisit if:' "$WORK/PROGRESS.md" 2>/dev/null && saved=yes || saved=no; }
+        [[ $part != 2 ]] || { grep -q -- '--inplace.*revisit if:' "$WORK/PROGRESS.md" 2>/dev/null && saved=yes || saved=no; }
         before="$(tags)"
         ask "part$part" "" "$NEXT"  # a new session: only files carry the state
       fi
@@ -115,11 +125,12 @@ for method in $METHODS; do
     done
     for log in "$LOGS"/c[0-9][0-9]-*.jsonl; do
       call_ok "$log" || invalid "call $(basename "$log" .jsonl) failed or gave no result"
+      has_model_usage "$log" || invalid "call $(basename "$log" .jsonl) has no modelUsage (tokens unknown)"
     done
     planted="$( [[ "$(inplace_runs "$(log_of part1)")" -ge 1 ]] && echo yes || echo no )"
     retries="$(inplace_runs "$(log_of part2)" "$(log_of part3)")"
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$method" "$run" "$planted" "$retries" "$next_ok" "$saved" \
-      "$(totals)" "$valid" "$LOGS" >> "$TSV"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$method" "$run" "$planted" "$retries" "$next_ok" "$saved" \
+      "$(totals)" "$valid" "$CLAUDE_VERSION" "$LOGS" >> "$TSV"
     echo "continuity $method run $run: planted=$planted retries=$retries next_ok=$next_ok/2 valid=$valid" >&2
   done
 done
