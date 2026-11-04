@@ -304,59 +304,86 @@ echo '{"type":"result","result":"done","total_cost_usd":0.25,"num_turns":3,"perm
 
 
 class Continuity(unittest.TestCase):
-    """continuity.sh with a fake claude: it does the task, retries --inplace once per later part,
-    writes PROGRESS.md when /handoff is confirmed, and marks /compact (unless FAKE_NO_COMPACT is set)."""
+    """continuity.sh with a fake claude that follows the documented -p semantics: --resume keeps the session id,
+    and a result reports the session's running totals. Per call it costs 1.0 and 100 tokens. It does the task
+    (retrying --inplace once per part unless FAKE_NO_INPLACE), commits, writes PROGRESS.md when /handoff is
+    confirmed (only the first time with FAKE_HANDOFF_ONCE), marks /compact (unless FAKE_NO_COMPACT), and ends
+    /handoff with an error result when FAKE_HANDOFF_ERROR is set."""
     FAKE_CLAUDE = r"""#!/usr/bin/env bash
-prompt="$(cat)"
+prompt="$(cat)" session=""
+while [[ $# -gt 0 ]]; do [[ "$1" == --resume ]] && { session="$2"; shift; }; shift; done
+[[ -n "$session" ]] || session="s-$RANDOM$RANDOM"
+calls=$(( $(cat "$FAKE_STATE/$session" 2>/dev/null || echo 0) + 1 )); echo "$calls" > "$FAKE_STATE/$session"
 emit() { printf '%s\n' "$1"; }
 bash_use() { emit "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{\"command\":\"$1\"}}]}}"; }
-emit '{"type":"system","subtype":"init","session_id":"s-'"$RANDOM"'"}'
+emit '{"type":"system","subtype":"init","session_id":"'"$session"'"}'
+error=false
 case "$prompt" in
   /compact) [[ -n "${FAKE_NO_COMPACT:-}" ]] || emit '{"type":"system","subtype":"compact_boundary"}' ;;
-  "Yes, write it.") printf '# PROGRESS\n' > PROGRESS.md ;;
-  /handoff) ;;
+  "Yes, write it.")
+    [[ -n "${FAKE_HANDOFF_ONCE:-}" && -f PROGRESS.md ]] || printf '# PROGRESS\n- %s: --inplace · revisit if: never\n' "$session" > PROGRESS.md ;;
+  /handoff) [[ -z "${FAKE_HANDOFF_ERROR:-}" ]] || error=true ;;
   *)
-    bash_use "tools/bump-tag.sh x 1 --inplace"
+    [[ -n "${FAKE_NO_INPLACE:-}" ]] || bash_use "tools/bump-tag.sh x 1 --inplace"
     if [[ "$prompt" == We\ release* ]]; then tools/bump-tag.sh api 1.4.2 --patch >/dev/null
     elif grep -q '"2.0.0"' release/tags.yaml; then tools/bump-tag.sh web 2.0.1 --patch >/dev/null
-    else tools/bump-tag.sh worker 0.9.7 --patch >/dev/null; fi ;;
+    else tools/bump-tag.sh worker 0.9.7 --patch >/dev/null; fi
+    git add release && git -c user.name=t -c user.email=t@example.invalid commit -qm release ;;
 esac
-emit '{"type":"result","result":"ok","total_cost_usd":0.5,"usage":{"input_tokens":100,"output_tokens":10,"cache_read_input_tokens":0}}'
+emit '{"type":"result","is_error":'"$error"',"session_id":"'"$session"'","total_cost_usd":'"$calls"',"usage":{"input_tokens":1},"modelUsage":{"m":{"inputTokens":'"$((calls * 90))"',"outputTokens":'"$((calls * 10))"',"cacheReadInputTokens":0,"cacheCreationInputTokens":0}}}'
 """
 
     def run_continuity(self, tmp, **env_extra):
         claude = Path(tmp, "claude")
         claude.write_text(self.FAKE_CLAUDE)
         claude.chmod(0o755)
+        Path(tmp, "state").mkdir()
         tsv = Path(tmp, "c.tsv")
-        env = dict(os.environ, CLAUDE_BIN=str(claude), SCENARIO_RUNS_DIR=str(Path(tmp, "runs")), **env_extra)
+        env = dict(os.environ, CLAUDE_BIN=str(claude), SCENARIO_RUNS_DIR=str(Path(tmp, "runs")),
+                   FAKE_STATE=str(Path(tmp, "state")), **env_extra)
         result = subprocess.run([str(SCENARIOS / "continuity.sh"), "--runs", "1", "--tsv", str(tsv)],
                                 env=env, capture_output=True, text=True, timeout=120)
         self.assertEqual(result.returncode, 0, result.stderr)
         with open(tsv, encoding="utf-8") as fh:
-            return {row["method"]: row for row in csv.DictReader(fh, delimiter="\t")}
+            rows = {row["method"]: row for row in csv.DictReader(fh, delimiter="\t")}
+        return rows, load("continuity_report", SCENARIOS / "continuity_report.py").report(list(rows.values()), "x")
 
     @unittest.skipUnless(shutil.which("jq"), "jq not installed")
     def test_measures_both_methods(self):
         with tempfile.TemporaryDirectory() as tmp:
-            rows = self.run_continuity(tmp)
-            report = load("continuity_report", SCENARIOS / "continuity_report.py").report(list(rows.values()), "x")
-        for method, calls in (("compact", 5), ("handoff", 7)):
-            with self.subTest(method=method):
-                row = rows[method]
-                self.assertEqual((row["valid"], row["planted"], row["retries"], row["next_ok"]), ("yes", "yes", "2", "2"))
-                self.assertEqual(int(row["tokens"]), 110 * calls)
+            rows, report = self.run_continuity(tmp)
+        for method in ("compact", "handoff"):
+            row = rows[method]
+            self.assertEqual((row["valid"], row["planted"], row["retries"], row["next_ok"]), ("yes", "yes", "2", "2"), method)
+        self.assertEqual(rows["handoff"]["saved"], "yes")
+        self.assertIn("| dead-end retries in parts 2–3 (total) | 2 in 1 runs | 2 in 1 runs |", report)
         self.assertIn("| parts 2–3 that did the right next step | 2 / 2 | 2 / 2 |", report)
-        self.assertIn("| dead-end retries in parts 2–3 (total) | 2 | 2 |", report)
 
     @unittest.skipUnless(shutil.which("jq"), "jq not installed")
-    def test_a_compact_that_did_not_run_makes_the_run_invalid(self):
+    def test_resumed_calls_are_not_counted_twice(self):
+        # A: 5 calls in one session. B: sessions of 3 + 3 + 1 calls. Summing every result would give 15 and 13.
         with tempfile.TemporaryDirectory() as tmp:
-            rows = self.run_continuity(tmp, FAKE_NO_COMPACT="1")
-            report = load("continuity_report", SCENARIOS / "continuity_report.py").report(list(rows.values()))
-        self.assertTrue(rows["compact"]["valid"].startswith("no (no compact_boundary"))
-        self.assertEqual(rows["handoff"]["valid"], "yes")
-        self.assertIn("| valid runs | 0 / 1 | 1 / 1 |", report)
+            rows, _ = self.run_continuity(tmp)
+        self.assertEqual((float(rows["compact"]["cost"]), int(rows["compact"]["tokens"])), (5.0, 500))
+        self.assertEqual((float(rows["handoff"]["cost"]), int(rows["handoff"]["tokens"])), (7.0, 700))
+
+    @unittest.skipUnless(shutil.which("jq"), "jq not installed")
+    def test_runs_that_measure_nothing_are_invalid(self):
+        cases = (("FAKE_NO_COMPACT", "compact", "no (no compact_boundary before part 2)"),
+                 ("FAKE_HANDOFF_ONCE", "handoff", "no (handoff before part 3 wrote nothing)"),
+                 ("FAKE_HANDOFF_ERROR", "handoff", "no (call c02-handoff2 failed or gave no result)"))
+        for flag, method, reason in cases:
+            with self.subTest(flag=flag), tempfile.TemporaryDirectory() as tmp:
+                rows, report = self.run_continuity(tmp, **{flag: "1"})
+                self.assertEqual(rows[method]["valid"], reason)
+                self.assertIn("Invalid runs:", report)
+
+    @unittest.skipUnless(shutil.which("jq"), "jq not installed")
+    def test_retries_count_only_where_the_dead_end_was_met(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rows, report = self.run_continuity(tmp, FAKE_NO_INPLACE="1")
+        self.assertEqual(rows["compact"]["planted"], "no")
+        self.assertIn("| dead-end retries in parts 2–3 (total) | 0 in 0 runs | 0 in 0 runs |", report)
 
     @unittest.skipUnless(shutil.which("jq"), "jq not installed")
     def test_benchmark_continuity_installs_runs_reports_and_uninstalls(self):
@@ -367,7 +394,8 @@ emit '{"type":"result","result":"ok","total_cost_usd":0.5,"usage":{"input_tokens
             bench = Path(tmp, "bench")
             bench.mkdir()
             out = Path(tmp, "result.md")
-            env = dict(os.environ, HOME=tmp, CLAUDE_BIN=str(claude))
+            Path(tmp, "state").mkdir()
+            env = dict(os.environ, HOME=tmp, CLAUDE_BIN=str(claude), FAKE_STATE=str(Path(tmp, "state")))
             env.pop("CLAUDE_CONFIG_DIR", None)
             result = subprocess.run([str(SCENARIOS / "benchmark.sh"), "--config-dir", str(bench), "--continuity",
                                      "--runs", "1", "--models", "fake", "--out", str(out)],

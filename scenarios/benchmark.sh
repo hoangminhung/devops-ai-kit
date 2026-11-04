@@ -46,6 +46,7 @@ for tool in jq python3; do
   command -v "$tool" >/dev/null || { echo "$tool is needed" >&2; exit 1; }
 done
 [[ "$RUNS_N" =~ ^[1-9][0-9]*$ ]] || { echo "--runs must be a positive number" >&2; exit 2; }
+[[ -z "$CONTINUITY" || -z "$SCENARIOS" ]] || { echo "--continuity runs only scenario 13; drop --scenarios" >&2; exit 2; }
 if [[ -z "$SCENARIOS" ]]; then
   SCENARIOS="$(grep -l '^```check$' "$HERE"/[0-9][0-9]-*.md | xargs -n1 basename | cut -c1-2 | tr '\n' ' ')"
 fi

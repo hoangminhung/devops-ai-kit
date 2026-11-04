@@ -67,7 +67,7 @@ No detail is written twice.
 
 ### 4.3 `PROGRESS.md` format
 
-See `claude/skills/handoff/references/progress-format.md`. Key rules:
+*(Superseded: the trial uses `templates/PROGRESS.md`, see §9.)* See `claude/skills/handoff/references/progress-format.md`. Key rules:
 
 - **Replace, don't append** for "Current state" and "Next steps". Those sections describe *now*, not history.
 - **Append, newest first** for "Decisions" and "Dead ends", with a cap. Older entries roll up into "History", or into `docs/progress-archive/<YYYY-MM>.md`.
@@ -111,7 +111,7 @@ This turns daily work into improvements of the kit itself.
 | Risk | Mitigation |
 |---|---|
 | `PROGRESS.md` becomes a confident but wrong source of truth | User reviews the diff before write; `/pickup` cross-checks git log/status and flags staleness by timestamp; evidence markers |
-| Ceremony fatigue: handoff feels slow, user skips it | One confirmation, target < 1 minute; `--quick` mode updates only "Current state" and "Next steps" |
+| Ceremony fatigue: handoff feels slow, user skips it | One confirmation, target < 1 minute; `--quick` mode updates only "Current state" and "Next steps" *(superseded: the quick version is the only one in the trial, §9)* |
 | Model-written summary has the same weakness as `/compact` | Structured sections, focused on what the *next* session needs; human-reviewed; persistent and diffable in git |
 | Secrets or customer data written into `PROGRESS.md` and committed | Kit secret rule applies; handoff never copies command output verbatim, only conclusions; option to keep a git-ignored `PROGRESS.local.md` for client repos |
 | Two sessions (VS Code + Desktop) write `PROGRESS.md` at once | Re-read the file right before writing; show a diff against the current content; git as backstop |

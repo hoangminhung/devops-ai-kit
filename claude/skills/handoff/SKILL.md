@@ -23,14 +23,16 @@ The next session starts with an empty context and knows only what is in files. W
 
 ## Steps
 
-1. **Find the progress file.** Use the path that the project's CLAUDE.md names, or `PROGRESS.md` at the repo root (`git rev-parse --show-toplevel`). If you are not in a git repo, ask where it is. If the file does not exist, you will create it with the parts listed in `00-core` §9.
+1. **Find the progress file.** Use the path that the project's CLAUDE.md names, or `PROGRESS.md` at the repo root (`git rev-parse --show-toplevel`). If you are not in a git repo, ask where it is. If the file does not exist, you will create it from the template of the `infra-scout` skill (`<skill base directory>/../infra-scout/templates/PROGRESS.md`), with the placeholders filled in or removed.
 2. **Read it now and record its hash.** Another session (VS Code, the Desktop app) may have changed it since this session started:
 
    ```bash
    sha256sum PROGRESS.md
    ```
 
-3. **Read the active task folders.** For each task folder that Open items links to, or each `docs/changes/*/00-brief.md` whose `Status:` line is not `Done`, run the read-only status command of the `infra-task` skill, which is installed next to this one: `python3 <skill base directory>/../infra-task/scripts/plan_status.py status <task folder>`.
+   If it does not exist, record "no file".
+
+3. **Read the active task folders.** For each task folder that Open items links to, or each `docs/changes/*/00-brief.md` whose first line does not start with `Status: Done`, run the read-only status command of the `infra-task` skill, which is installed next to this one: `python3 <skill base directory>/../infra-task/scripts/plan_status.py status <task folder>`. If the folder has no `03-plan.md` yet, or the script is not there, use the `Status:` line of `00-brief.md` instead and do not guess a step.
 
    Use its output (the first unticked step) in Next steps. If a step ran in this session but is not ticked, write in Next steps: "⚠️ Step N ran but is not ticked: run `/infra-task resume <folder>` to verify it".
 4. **Gather the rest** with read-only commands: `git rev-parse --abbrev-ref HEAD`, `git rev-parse --short HEAD`, `git status --short`, `git log --oneline -5`.
@@ -44,5 +46,5 @@ The next session starts with an empty context and knows only what is in files. W
 
    Update the `Last updated:` line: `<YYYY-MM-DD HH:MM> · branch <name> @ <short sha>`.
 6. **Show the change and ask once.** Show only the three parts and the `Last updated:` line, old → new (a diff, or the new text if the file is new). Ask: write it? Apply the corrections the user gives.
-7. **Check the hash, then write.** Run `sha256sum` again. If the hash changed, someone else wrote the file: read it again, merge your three parts into the new content, show the change again and ask again. Write only when the hash matches the one you showed the change against.
+7. **Check the hash, then write.** Run `sha256sum` again (or check that the file still does not exist). If it changed, someone else wrote the file: read it again, merge your three parts into the new content, show the change again and ask again. Write only when the hash matches the one you showed the change against, right after that check. Change an existing file with Edit (only the three parts and the `Last updated:` line), not by writing the whole file again.
 8. **Close** in at most 4 lines: what was written and where; uncommitted changes (propose a commit message, do not commit); the parts that look out of date, and the file's length if it is over ~200 lines (`wc -l`; do not trim other parts yourself); and that it is now safe to run `/clear`. Claude cannot run `/clear`; the user does. The next session reads the progress file first (`00-core` §9).

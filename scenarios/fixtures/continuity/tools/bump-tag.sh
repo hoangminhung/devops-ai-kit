@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Change the image tag of one service in release/tags.yaml.
 #   tools/bump-tag.sh <service> <tag> --inplace|--patch
-# Scenario 13 fixture: --inplace always fails, so the first session meets a dead end.
 set -euo pipefail
 FILE="$(cd "$(dirname "$0")/.." && pwd)/release/tags.yaml"
 svc="${1:-}" tag="${2:-}" mode="${3:-}"

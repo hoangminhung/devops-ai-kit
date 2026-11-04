@@ -33,61 +33,93 @@ SCENARIO="$HERE/13-continuity.md"
 block() { awk -v name="$1" '$0 == "```" name {inside=1; next} inside && $0 == "```" {exit} inside {print}' "$SCENARIO"; }
 PART1="$(block prompt)" NEXT="$(block prompt-next)" CONFIRM="$(block confirm)"
 # Headless runs cannot answer a confirm dialog: allow what the task and /handoff need, nothing more.
-ALLOWED=(--allowedTools "Bash(tools/bump-tag.sh:*)" "Bash(git:*)" "Bash(sha256sum:*)" "Bash(cat:*)" "Bash(grep:*)"
-         "Bash(python3:*)" Read Edit Write)
+ALLOWED=(--allowedTools "Bash(tools/bump-tag.sh:*)" "Bash(./tools/bump-tag.sh:*)" "Bash(bash tools/bump-tag.sh:*)"
+         "Bash(git:*)" "Bash(sha256sum:*)" "Bash(date:*)" "Bash(wc:*)" "Bash(grep:*)" Read Glob Grep Edit Write)
 MODEL_FLAGS=()
 [[ -n "${MODEL:-}" ]] && MODEL_FLAGS=(--model "$MODEL")
 
-# ask <log> <session id or ""> <prompt>: one headless call in $WORK; prints the session id it ran in
-# (the given one if the log has none, so a failed call does not lose the session)
+# ask <label> <session id or ""> <prompt>: one headless call in $WORK, logged to $LOGS/cNN-<label>.jsonl
+# (numbered, so the logs sort in call order). Sets SESSION to the session it ran in, or keeps the given one
+# if the log has none. Not called in $(...): the call counter must survive.
+CALL=0 SESSION=""
 ask() {
-  local log="$1" session="$2" prompt="$3" resume=()
+  local label="$1" session="$2" prompt="$3" resume=() log id
+  CALL=$((CALL + 1))
+  log="$LOGS/$(printf 'c%02d' "$CALL")-$label.jsonl"
   [[ -n "$session" ]] && resume=(--resume "$session")
   (cd "$WORK" && printf '%s\n' "$prompt" | "$CLAUDE_BIN" -p --output-format stream-json --verbose \
-    "${resume[@]}" "${ALLOWED[@]}" "${MODEL_FLAGS[@]}" > "$log" 2> "${log%.jsonl}.stderr") || true
-  local id
+    ${resume[@]+"${resume[@]}"} "${ALLOWED[@]}" ${MODEL_FLAGS[@]+"${MODEL_FLAGS[@]}"} \
+    > "$log" 2> "${log%.jsonl}.stderr") || true
   id="$(jq -rR 'fromjson? // empty | select(.type=="system" and .subtype=="init") | .session_id' "$log" | head -1)"
-  echo "${id:-$session}"
+  SESSION="${id:-$session}"
 }
-tag_of() { awk -v svc="  $1:" '/^  [a-z]+:$/ { inside = ($0 == svc) } inside && /^    tag:/ { gsub(/[" ]|tag:/, ""); print }' \
-  "$WORK/release/tags.yaml"; }
+log_of() { ls "$LOGS"/c[0-9][0-9]-"$1".jsonl 2>/dev/null | tail -1; }  # newest log with this label
+# call_ok <log>: the call ended with a result that is not an error
+call_ok() { jq -seR '[split("\n")[] | fromjson? // empty | select(.type=="result")] | last
+  | . != null and (.is_error // false) == false and ((.subtype // "success") == "success")' "$1" >/dev/null; }
+compacted() { jq -rR 'fromjson? // empty | select(.type=="system" and .subtype=="compact_boundary") | 1' "$1" | grep -c . || true; }
 inplace_runs() { # inplace_runs <log>...: bump-tag.sh calls with --inplace
   cat "$@" | jq -rR 'fromjson? // empty | select(.type=="assistant") | .message.content[]?
     | select(.type=="tool_use" and .name=="Bash") | .input.command' | grep -c 'bump-tag\.sh.*--inplace' || true
 }
-compacted() { jq -rR 'fromjson? // empty | select(.type=="system" and .subtype=="compact_boundary") | 1' "$1" | grep -c . || true; }
+tag_of() { awk -v svc="  $1:" '/^  [a-z]+:$/ { inside = ($0 == svc) } inside && /^    tag:/ { gsub(/[" ]|tag:/, ""); print }' \
+  "$WORK/release/tags.yaml"; }
+tags() { echo "$(tag_of api) $(tag_of web) $(tag_of worker)"; }
+committed() { git -C "$WORK" diff --quiet HEAD -- release/tags.yaml; }
+progress_hash() { if [[ -f "$WORK/PROGRESS.md" ]]; then sha256sum "$WORK/PROGRESS.md" | cut -c1-64; else echo none; fi; }
+# totals: tokens and cost of the run. A resumed call's result already holds the session's earlier spend
+# (agent-sdk/cost-tracking), so take the LAST result of each session, then add up the sessions.
+# Tokens come from modelUsage (includes subagents); `usage` only when modelUsage is missing.
+totals() {
+  for log in "$LOGS"/c[0-9][0-9]-*.jsonl; do
+    jq -scR '[split("\n")[] | fromjson? // empty] as $e
+      | ($e | map(select(.type=="system" and .subtype=="init")) | first | .session_id // "?") as $s
+      | ($e | map(select(.type=="result")) | last // {}) as $r
+      | {s: ($r.session_id // $s), cost: ($r.total_cost_usd // 0),
+         tokens: (if $r.modelUsage then ([$r.modelUsage[] | (.inputTokens // 0) + (.outputTokens // 0)
+                    + (.cacheReadInputTokens // 0) + (.cacheCreationInputTokens // 0)] | add // 0)
+                  else ($r.usage // {} | (.input_tokens // 0) + (.output_tokens // 0)
+                    + (.cache_read_input_tokens // 0) + (.cache_creation_input_tokens // 0)) end)}' "$log"
+  done | jq -rs 'reduce .[] as $c ({}; .[$c.s] = $c) | [.[]] | "\(map(.tokens) | add // 0)\t\(map(.cost) | add // 0)"'
+}
 
-[[ -s "$TSV" ]] || printf 'method\trun\tplanted\tretries\tnext_ok\ttokens\tcost\tvalid\tlogs\n' > "$TSV"
+[[ -s "$TSV" ]] || printf 'method\trun\tplanted\tretries\tnext_ok\tsaved\ttokens\tcost\tvalid\tlogs\n' > "$TSV"
 for method in $METHODS; do
   for run in $(seq 1 "$RUNS_PER_METHOD"); do
     WORK="$(SCENARIO_RUNS_DIR="${SCENARIO_RUNS_DIR:-$HERE/.runs}" "$HERE/prepare.sh" 13 2>/dev/null | tail -1)"
-    LOGS="$(dirname "$WORK")"
-    valid=yes next_ok=0
-    session="$(ask "$LOGS/1-part.jsonl" "" "$PART1")"
+    LOGS="$(dirname "$WORK")" CALL=0
+    valid=yes next_ok=0 saved=-
+    invalid() { [[ "$valid" != yes ]] || valid="no ($1)"; }
+    ask part1 "" "$PART1"
+    [[ "$(tags)" == "1.4.2 2.0.0 0.9.6" ]] && committed || invalid "part 1 did not release api 1.4.2"
     for part in 2 3; do
       if [[ "$method" == compact ]]; then
-        session="$(ask "$LOGS/$part-compact.jsonl" "$session" "/compact")"
-        [[ "$(compacted "$LOGS/$part-compact.jsonl")" -ge 1 ]] || valid="no (no compact_boundary before part $part)"
-        session="$(ask "$LOGS/$part-part.jsonl" "$session" "$NEXT")"
+        ask "compact$part" "$SESSION" "/compact"
+        [[ "$(compacted "$(log_of "compact$part")")" -ge 1 ]] || invalid "no compact_boundary before part $part"
+        before="$(tags)"
+        ask "part$part" "$SESSION" "$NEXT"
       else
-        session="$(ask "$LOGS/$part-handoff.jsonl" "$session" "/handoff")"
-        ask "$LOGS/$part-confirm.jsonl" "$session" "$CONFIRM" >/dev/null
-        [[ -f "$WORK/PROGRESS.md" ]] || valid="no (no PROGRESS.md before part $part)"
-        session="$(ask "$LOGS/$part-part.jsonl" "" "$NEXT")"  # a new session: only files carry the state
+        hash="$(progress_hash)"
+        ask "handoff$part" "$SESSION" "/handoff"
+        ask "confirm$part" "$SESSION" "$CONFIRM"
+        [[ "$(progress_hash)" != "$hash" && "$(progress_hash)" != none ]] || invalid "handoff before part $part wrote nothing"
+        [[ $part != 2 ]] || { grep -q 'revisit if:' "$WORK/PROGRESS.md" 2>/dev/null && saved=yes || saved=no; }
+        before="$(tags)"
+        ask "part$part" "" "$NEXT"  # a new session: only files carry the state
       fi
       if [[ $part == 2 ]]; then
-        [[ "$(tag_of web)" == 2.0.1 && "$(tag_of worker)" == 0.9.6 ]] && next_ok=$((next_ok + 1))
+        [[ "$before" == "1.4.2 2.0.0 0.9.6" && "$(tags)" == "1.4.2 2.0.1 0.9.6" ]] && committed && next_ok=$((next_ok + 1))
       else
-        [[ "$(tag_of worker)" == 0.9.7 ]] && next_ok=$((next_ok + 1))
+        [[ "$before" == "1.4.2 2.0.1 0.9.6" && "$(tags)" == "1.4.2 2.0.1 0.9.7" ]] && committed && next_ok=$((next_ok + 1))
       fi
     done
-    planted="$( [[ "$(inplace_runs "$LOGS/1-part.jsonl")" -ge 1 ]] && echo yes || echo no )"
-    retries="$(inplace_runs "$LOGS"/2-part.jsonl "$LOGS"/3-part.jsonl)"
-    totals="$(cat "$LOGS"/*.jsonl | jq -sR '[split("\n")[] | fromjson? // empty | select(.type=="result")]
-      | {tokens: (map(.usage // {} | (.input_tokens // 0) + (.cache_creation_input_tokens // 0)
-                    + (.cache_read_input_tokens // 0) + (.output_tokens // 0)) | add // 0),
-         cost: (map(.total_cost_usd // 0) | add // 0)} | "\(.tokens)\t\(.cost)"' -r)"
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$method" "$run" "$planted" "$retries" "$next_ok" "$totals" "$valid" "$LOGS" >> "$TSV"
+    for log in "$LOGS"/c[0-9][0-9]-*.jsonl; do
+      call_ok "$log" || invalid "call $(basename "$log" .jsonl) failed or gave no result"
+    done
+    planted="$( [[ "$(inplace_runs "$(log_of part1)")" -ge 1 ]] && echo yes || echo no )"
+    retries="$(inplace_runs "$(log_of part2)" "$(log_of part3)")"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$method" "$run" "$planted" "$retries" "$next_ok" "$saved" \
+      "$(totals)" "$valid" "$LOGS" >> "$TSV"
     echo "continuity $method run $run: planted=$planted retries=$retries next_ok=$next_ok/2 valid=$valid" >&2
   done
 done

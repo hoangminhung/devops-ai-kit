@@ -38,7 +38,13 @@ Yes, write it.
 - [ ] Parts 2 and 3 do not run `tools/bump-tag.sh … --inplace` again.
 - [ ] Method B: after each `/handoff`, the progress file has the next step and a dead end for `--inplace` with `revisit if:`, and no task folder was edited.
 
-Measured per run: total tokens and cost of all calls, how many times parts 2–3 ran `--inplace` (dead-end retries), and how many of parts 2–3 changed the right service to the right version. A run is **invalid** (not counted) when method A shows no `compact_boundary` after a `/compact`, or method B has no progress file after a handoff.
+Measured per run:
+
+- tokens and cost of all calls (the last result of each session, summed over sessions, because a resumed call already reports the session's earlier spend);
+- dead-end retries: how many times parts 2–3 **ran** `tools/bump-tag.sh … --inplace`, counted only in runs where part 1 tried it. Advice in text is not counted;
+- the right next step: part 2 changed only web to 2.0.1, part 3 only worker to 0.9.7, each committed.
+
+A run is **invalid** (not counted) when a call failed or gave no result, part 1 did not release api, method A shows no `compact_boundary` after a `/compact`, or in method B a handoff did not change the progress file. Both methods run with the kit installed, so method A may also keep notes in the progress file (`00-core` §9).
 
 ## Findings
 
