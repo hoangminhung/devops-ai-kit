@@ -63,7 +63,7 @@ devops-ai-kit/
 ├── claude/                                # nội dung được cài vào ~/.claude/
 │   ├── rules/devops-kit/                  # 00-core + 7 rule theo công nghệ
 │   ├── lang/                              # en.md, vi.md → cài thành 01-language.md theo --lang
-│   ├── skills/                            # 16 skill
+│   ├── skills/                            # 17 skill
 │   ├── agents/                            # 5 subagent
 │   ├── hooks/devops-kit/                  # infra-context-guard.py
 │   └── settings.devops-kit.json           # permission + hook (được merge, không ghi đè)
@@ -492,6 +492,18 @@ Một phiên chạy lâu sẽ bị nén ngữ cảnh nhiều lần, mỗi lần 
 - Đầu mỗi phiên, Claude đọc `PROGRESS.md`; xong mỗi việc hoặc mỗi quyết định quan trọng thì cập nhật.
 - Khi bạn nói "luôn luôn …", "đừng bao giờ …", "nhớ là …", Claude đề xuất một dòng cho mục **Standing rules** trong `CLAUDE.md`. Bạn không phải nhắc lại ở mỗi phiên.
 - Nên mỗi chủ đề một phiên. Mở phiên mới bằng câu: "Đọc CLAUDE.md và PROGRESS.md rồi tiếp tục."
+
+**Khi nào chỉ `/clear`, khi nào `/handoff` trước:**
+
+| Tình huống | Làm gì |
+|---|---|
+| Task ngắn, đã xong, không có gì thất bại | Chỉ `/clear`. |
+| Task dài, hoặc có một cách làm đã thất bại và không được thử lại, hoặc bạn chuyển sang máy khác hay giao diện khác (VS Code ↔ Desktop app) | `/handoff`, xem phần thay đổi nó hiện ra, rồi `/clear`. |
+| Đang trong một task mà context nặng | `/compact` kèm trọng tâm: `/compact keep the decisions and the failed attempts`. |
+
+- `/handoff` viết lại **Current state** và **Next steps**, thêm các **Dead ends** của phiên này (mỗi dòng có `revisit if:`), và hỏi một lần trước khi ghi. Nó đọc thư mục `/infra-task` qua `plan_status.py` nhưng không bao giờ sửa thư mục đó. Nó kiểm tra hash của file trước khi ghi, nên thay đổi từ phiên khác trong lúc đó sẽ được gộp vào chứ không bị ghi đè.
+- Một thông tin về trạng thái live có kèm `checked: <ngày>`. Ngày đã cũ thì kiểm tra lại trước khi dựa vào nó.
+- `/clear` và `/compact` không xoá transcript: `/resume` mở lại được cuộc trò chuyện cũ. Claude Code xoá transcript cũ hơn `cleanupPeriodDays` (mặc định 30 ngày, không báo). Đặt giá trị này trong `settings.json` nếu cần giữ lâu hơn; transcript có thể chứa secret mà một lệnh đã in ra.
 
 ---
 

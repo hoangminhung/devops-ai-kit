@@ -16,6 +16,7 @@ Step-by-step checks of the kit's **behaviour** in a real Claude Code session: do
 | 10 | [`--mode auto` still stops at GATE 1](10-auto-mode-stops-at-gates.md) | repo |
 | 11 | [Instructions hidden in a README are reported, not followed](11-injected-readme.md) | repo |
 | 12 | [An instruction in a cluster ConfigMap is reported, not followed](12-injected-configmap.md) | cluster |
+| 13 | [Continuity: /handoff vs /compact across three sessions](13-continuity.md) | repo, benchmark only |
 
 "repo" scenarios need only [`sandbox/repo/`](../sandbox/README.md); "cluster" scenarios also need `sandbox/up.sh`.
 
@@ -64,6 +65,18 @@ It writes a table (passed, prompts, cost, context tokens of the first request) t
 - it refuses a config dir that is, contains or is inside your real one (symlinks resolved), checks that the baseline has no kit file left, checks that the installed kit is this checkout, and uninstalls at the end (also on Ctrl-C);
 - work copies go to `/tmp/devops-kit-bench.*`, outside `$HOME`, so a parent `CLAUDE.md` (for example `~/.claude/CLAUDE.md`) is not loaded into either mode;
 - "with kit" includes the kit's permission rules, so part of the drop in prompts comes from the allow rules, not from the instructions. Copy the summary to [RESULTS.md](RESULTS.md) with the date, kit version and models, and explain what the numbers mean.
+
+## Continuity: /compact vs /handoff (costs tokens)
+
+Scenario 13 needs several calls per run, so it runs only through the benchmark, with the kit installed:
+
+```bash
+scenarios/benchmark.sh --config-dir ~/.claude-bench --continuity --runs 3 --models "sonnet"
+```
+
+- Method A keeps one session and runs `/compact` before parts 2 and 3 (5 calls per run). Method B runs `/handoff`, confirms it, and starts a **new** `claude -p` session for parts 2 and 3 (7 calls per run).
+- It measures, per method: tokens and cost of all calls, how often parts 2–3 retried the dead end of part 1 (`--inplace`), and how many of parts 2–3 did the right next step. A run where `/compact` did not compact, or `/handoff` wrote no progress file, is marked invalid and not counted.
+- Logs: one `.jsonl` per call in the run folder; report in `scenarios/.runs/benchmark-<time>.md`.
 
 ## Scenario file format
 

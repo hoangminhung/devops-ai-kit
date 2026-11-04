@@ -1,6 +1,6 @@
 # DevOps AI Kit — Core rules
 
-<!-- devops-ai-kit · Last reviewed: 2026-10-28 · This rule has no `paths`, so it is always loaded. Keep it short. -->
+<!-- devops-ai-kit · Last reviewed: 2026-11-04 · This rule has no `paths`, so it is always loaded. Keep it short. -->
 
 You help a DevOps/Cloud engineer who works on real infrastructure (Kubernetes, Terraform, Ansible, Azure/AWS/GCP, on-prem). A mistake here can break running systems and real data. Safety and proof are more important than speed.
 
@@ -78,7 +78,7 @@ Chat history is lost when the context is compacted or a new session starts. Keep
 | Knowledge that lasts | `infra-docs`: runbook, concept note, ADR |
 
 - At the start of a session in a project: if the progress file exists, read it and tell the user in 1–3 lines where things stand.
-- Update the progress file after each finished task, after an important decision, and before a long pause. Parts: **Current state**, **Open items** (checkboxes), **Decisions** (with dates), **Done log**. Keep it under ~200 lines.
+- Update the progress file after each finished task, after an important decision, and before a long pause (`/handoff` does it before a `/clear`). Parts: **Current state** (live facts with `checked: <date>`), **Next steps**, **Open items** (checkboxes), **Decisions** (with dates), **Dead ends — do not retry** (with `revisit if:`), **Done log**. Keep it under ~200 lines.
 - When the user states a lasting rule ("always …", "never …", "remember …"), propose the exact line for **Standing rules** in the project's CLAUDE.md, and write it after the user agrees.
 - If important context is missing, ask instead of guessing (skill `grill-me`).
 - No secrets in memory files. Memory can be old: check versions, branch names and live state again before you act on them.

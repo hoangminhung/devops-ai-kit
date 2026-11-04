@@ -15,7 +15,7 @@ Hướng dẫn đầy đủ: [docs/vi/huong-dan.md](docs/vi/huong-dan.md) · Thu
 | Lớp | Nội dung | Khi nào được nạp |
 |---|---|---|
 | Rules | `00-core` (an toàn, cấp rủi ro L0–L3, bằng chứng, tài liệu), `01-language` (ngôn ngữ đầu ra) + Terraform, Ansible, Kubernetes, Helm, Argo CD, Dockerfile, observability | `00-core` và `01-language` luôn nạp; các rule còn lại nạp qua `paths:` khi đụng tới file khớp |
-| Skills | `/infra-scout` + `/infra-rulebook` (onboard repo: CLAUDE.md và độ phủ rule), quy trình `/infra-task`, `grill-me` (hỏi bạn cho tới khi đủ ngữ cảnh), `infra-docs` (change record, concept note, runbook, ADR, postmortem), 8 skill chuẩn thiết kế, 3 playbook (monitoring stack, migrate PostgreSQL bằng PGO, AKS) | Khi cần (khớp mô tả hoặc gọi bằng lệnh `/`) |
+| Skills | `/infra-scout` + `/infra-rulebook` (onboard repo: CLAUDE.md và độ phủ rule), quy trình `/infra-task`, `grill-me` (hỏi bạn cho tới khi đủ ngữ cảnh), `/handoff` (lưu trạng thái phiên vào `PROGRESS.md` trước khi `/clear`), `infra-docs` (change record, concept note, runbook, ADR, postmortem), 8 skill chuẩn thiết kế, 3 playbook (monitoring stack, migrate PostgreSQL bằng PGO, AKS) | Khi cần (khớp mô tả hoặc gọi bằng lệnh `/`) |
 | Subagents | `infra-recon`, `infra-researcher`, `infra-reviewer`, `infra-verifier`, `infra-scribe` | Do `/infra-task` gọi, hoặc khi bạn yêu cầu |
 | Lớp bảo vệ | Permission rules (deny/ask/allow), hook PreToolUse hiện đúng nơi tác động (context, namespace, workspace, subscription) trên mọi lệnh mutating và chặn các lệnh bị cấm dù cờ đứng ở đâu, RBAC read-only + script tạo kubeconfig cho AI | Claude Code / Kubernetes cưỡng chế, không phụ thuộc model |
 
@@ -48,7 +48,7 @@ Với CLI của cloud (Azure / AWS / GCP), xem [docs/vi/cloud-readonly.md](docs/
 
 - Việc L0/L1: prompt như bình thường; rules tự áp dụng.
 - Chưa rõ nên yêu cầu gì, hoặc Claude thiếu ngữ cảnh: `/grill-me <chủ đề>`. Claude hỏi từng vòng ngắn, câu nào cũng kèm đáp án đề xuất.
-- Project chạy lâu: giữ một file `PROGRESS.md` (mẫu trong `templates/`). Claude đọc nó đầu mỗi phiên và cập nhật sau mỗi việc, nên hết phiên cũng không mất gì.
+- Project chạy lâu: giữ một file `PROGRESS.md` (mẫu trong `templates/`). Claude đọc nó đầu mỗi phiên và cập nhật sau mỗi việc, nên hết phiên cũng không mất gì. Trước khi `/clear` sau một việc dài, chạy `/handoff`.
 - Việc L2/L3: `/infra-task <mô tả>` → recon → research → plan → review → **cổng duyệt** → implement → review → **cổng duyệt** → execute → verify → docs. Làm tiếp bất cứ lúc nào bằng `/infra-task resume <thư-mục-task>` (tiếp tục từ bước đầu tiên chưa đánh dấu). `--mode auto` bỏ các lần dừng giữa các phase giấy tờ cho L1/L2 (cổng duyệt và lệnh mutating vẫn chờ bạn); task lớn có thể chia lát.
 
 ## Cấu trúc thư mục
@@ -59,7 +59,7 @@ devops-ai-kit/
 ├── claude/                  # được cài vào ~/.claude/
 │   ├── rules/devops-kit/    # 00-core + 7 rule theo công nghệ
 │   ├── lang/                # en.md, vi.md → 01-language.md
-│   ├── skills/              # 16 skill
+│   ├── skills/              # 17 skill
 │   ├── agents/              # 5 subagent
 │   ├── hooks/devops-kit/    # infra-context-guard.py
 │   └── settings.devops-kit.json

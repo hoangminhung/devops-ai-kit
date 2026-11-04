@@ -3,6 +3,7 @@
 These tests need no cluster and no Claude session.
 Run: python3 -m unittest discover -s tests -v
 """
+import csv
 import importlib.util
 import json
 import os
@@ -300,6 +301,170 @@ echo '{"type":"result","result":"done","total_cost_usd":0.25,"num_turns":3,"perm
                                     env=env, capture_output=True, text=True, timeout=60)
         self.assertEqual(result.returncode, 2)
         self.assertIn("unknown scenario: 99", result.stderr)
+
+
+class Continuity(unittest.TestCase):
+    """continuity.sh with a fake claude that follows the documented -p semantics: --resume keeps the session id,
+    and a result reports the session's running totals. Per call it costs 1.0 and 100 tokens. It does the task
+    (retrying --inplace once per part unless FAKE_NO_INPLACE), commits, writes PROGRESS.md when /handoff is
+    confirmed (only the first time with FAKE_HANDOFF_ONCE), marks /compact (unless FAKE_NO_COMPACT), and ends
+    /handoff with an error result when FAKE_HANDOFF_ERROR is set. FAKE_NO_SKILL leaves handoff out of the init's
+    slash_commands, FAKE_CRASH_PART3 ends the part-3 call after init (no result), FAKE_VERSION sets --version."""
+    FAKE_CLAUDE = r"""#!/usr/bin/env bash
+[[ "$1" == --version ]] && { echo "${FAKE_VERSION:-2.1.316} (Claude Code)"; exit 0; }
+prompt="$(cat)" session=""
+while [[ $# -gt 0 ]]; do [[ "$1" == --resume ]] && { session="$2"; shift; }; shift; done
+[[ -n "$session" ]] || session="s-$RANDOM$RANDOM"
+calls=$(( $(cat "$FAKE_STATE/$session" 2>/dev/null || echo 0) + 1 )); echo "$calls" > "$FAKE_STATE/$session"
+emit() { printf '%s\n' "$1"; }
+bash_use() { emit "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{\"command\":\"$1\"}}]}}"; }
+commands='"compact","handoff"'; [[ -z "${FAKE_NO_SKILL:-}" ]] || commands='"compact"'
+emit '{"type":"system","subtype":"init","session_id":"'"$session"'","slash_commands":['"$commands"']}'
+[[ -n "${FAKE_CRASH_PART3:-}" && "$prompt" == Continue* && -f .part2-done ]] && exit 1
+error=false
+case "$prompt" in
+  /compact) [[ -n "${FAKE_NO_COMPACT:-}" ]] || emit '{"type":"system","subtype":"compact_boundary"}' ;;
+  "Yes, write it.")
+    [[ -n "${FAKE_HANDOFF_ONCE:-}" && -f PROGRESS.md ]] || printf '# PROGRESS\n- %s: --inplace · revisit if: never\n' "$session" > PROGRESS.md ;;
+  /handoff) [[ -z "${FAKE_HANDOFF_ERROR:-}" ]] || error=true ;;
+  *)
+    [[ -n "${FAKE_NO_INPLACE:-}" ]] || bash_use "tools/bump-tag.sh x 1 --inplace"
+    if [[ "$prompt" == We\ release* ]]; then tools/bump-tag.sh api 1.4.2 --patch >/dev/null
+    elif grep -q '"2.0.0"' release/tags.yaml; then tools/bump-tag.sh web 2.0.1 --patch >/dev/null
+    else tools/bump-tag.sh worker 0.9.7 --patch >/dev/null; fi
+    git add release && git -c user.name=t -c user.email=t@example.invalid commit -qm release
+    [[ "$prompt" != Continue* ]] || touch .part2-done ;;
+esac
+usage='"modelUsage":{"m":{"inputTokens":'"$((calls * 90))"',"outputTokens":'"$((calls * 10))"',"cacheReadInputTokens":0,"cacheCreationInputTokens":0}}'
+[[ -n "${FAKE_COMPACT_NO_USAGE:-}" && "$prompt" == /compact ]] && usage='"usage":{"input_tokens":1}'
+emit '{"type":"result","is_error":'"$error"',"session_id":"'"$session"'","total_cost_usd":'"$calls"','"$usage"'}'
+"""
+
+    def run_continuity(self, tmp, **env_extra):
+        claude = Path(tmp, "claude")
+        claude.write_text(self.FAKE_CLAUDE)
+        claude.chmod(0o755)
+        Path(tmp, "state").mkdir()
+        tsv = Path(tmp, "c.tsv")
+        env = dict(os.environ, CLAUDE_BIN=str(claude), SCENARIO_RUNS_DIR=str(Path(tmp, "runs")),
+                   FAKE_STATE=str(Path(tmp, "state")), **env_extra)
+        result = subprocess.run([str(SCENARIOS / "continuity.sh"), "--runs", "1", "--tsv", str(tsv)],
+                                env=env, capture_output=True, text=True, timeout=120)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with open(tsv, encoding="utf-8") as fh:
+            rows = {row["method"]: row for row in csv.DictReader(fh, delimiter="\t")}
+        return rows, load("continuity_report", SCENARIOS / "continuity_report.py").report(list(rows.values()), "x")
+
+    @unittest.skipUnless(shutil.which("jq"), "jq not installed")
+    def test_measures_both_methods(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rows, report = self.run_continuity(tmp)
+        for method in ("compact", "handoff"):
+            row = rows[method]
+            self.assertEqual((row["valid"], row["planted"], row["retries"], row["next_ok"]), ("yes", "yes", "2", "2"), method)
+        self.assertEqual(rows["handoff"]["saved"], "yes")
+        self.assertIn("| dead-end retries in parts 2–3 (total) | 2 in 1 runs | 2 in 1 runs |", report)
+        self.assertIn("| parts 2–3 that did the right next step | 2 / 2 | 2 / 2 |", report)
+        self.assertIn("Claude Code: 2.1.316.", report)
+
+    @unittest.skipUnless(shutil.which("jq"), "jq not installed")
+    def test_resumed_calls_are_not_counted_twice(self):
+        # A: 5 calls in one session. B: sessions of 3 + 3 + 1 calls. Summing every result would give 15 and 13.
+        with tempfile.TemporaryDirectory() as tmp:
+            rows, _ = self.run_continuity(tmp)
+        self.assertEqual((float(rows["compact"]["cost"]), int(rows["compact"]["tokens"])), (5.0, 500))
+        self.assertEqual((float(rows["handoff"]["cost"]), int(rows["handoff"]["tokens"])), (7.0, 700))
+
+    @unittest.skipUnless(shutil.which("jq"), "jq not installed")
+    def test_runs_that_measure_nothing_are_invalid(self):
+        cases = (("FAKE_NO_COMPACT", "compact", "no (no compact_boundary before part 2)"),
+                 ("FAKE_HANDOFF_ONCE", "handoff", "no (handoff before part 3 wrote nothing)"),
+                 ("FAKE_HANDOFF_ERROR", "handoff", "no (call c02-handoff2 failed or gave no result)"))
+        for flag, method, reason in cases:
+            with self.subTest(flag=flag), tempfile.TemporaryDirectory() as tmp:
+                rows, report = self.run_continuity(tmp, **{flag: "1"})
+                self.assertEqual(rows[method]["valid"], reason)
+                self.assertIn("Invalid runs:", report)
+
+    @unittest.skipUnless(shutil.which("jq"), "jq not installed")
+    def test_only_the_result_that_holds_the_session_total_needs_model_usage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rows, _ = self.run_continuity(tmp, FAKE_COMPACT_NO_USAGE="1")
+        self.assertEqual((rows["compact"]["valid"], rows["compact"]["tokens"]), ("yes", "500"))
+
+    @unittest.skipUnless(shutil.which("jq"), "jq not installed")
+    def test_handoff_that_is_not_the_skill_is_invalid(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rows, _ = self.run_continuity(tmp, FAKE_NO_SKILL="1")
+        self.assertEqual(rows["handoff"]["valid"], "no (/handoff before part 2 was not the installed skill)")
+
+    @unittest.skipUnless(shutil.which("jq"), "jq not installed")
+    def test_a_crashed_last_call_keeps_the_sessions_spend(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rows, _ = self.run_continuity(tmp, FAKE_CRASH_PART3="1")
+        self.assertEqual(float(rows["compact"]["cost"]), 4.0)  # 5 calls, the last one gave no result
+        self.assertTrue(rows["compact"]["valid"].startswith("no (call c05-part3 failed"))
+
+    def test_refuses_a_claude_older_than_running_totals(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            claude = Path(tmp, "claude")
+            claude.write_text(self.FAKE_CLAUDE)
+            claude.chmod(0o755)
+            result = subprocess.run([str(SCENARIOS / "continuity.sh"), "--tsv", str(Path(tmp, "c.tsv"))],
+                                    env=dict(os.environ, CLAUDE_BIN=str(claude), FAKE_VERSION="2.1.276"),
+                                    capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("2.1.276 is too old", result.stderr)
+
+    @unittest.skipUnless(shutil.which("jq"), "jq not installed")
+    def test_retries_count_only_where_the_dead_end_was_met(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rows, report = self.run_continuity(tmp, FAKE_NO_INPLACE="1")
+        self.assertEqual(rows["compact"]["planted"], "no")
+        self.assertIn("| dead-end retries in parts 2–3 (total) | 0 in 0 runs | 0 in 0 runs |", report)
+
+    @unittest.skipUnless(shutil.which("jq"), "jq not installed")
+    def test_benchmark_continuity_installs_runs_reports_and_uninstalls(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            claude = Path(tmp, "claude")
+            claude.write_text(self.FAKE_CLAUDE)
+            claude.chmod(0o755)
+            bench = Path(tmp, "bench")
+            bench.mkdir()
+            out = Path(tmp, "result.md")
+            Path(tmp, "state").mkdir()
+            env = dict(os.environ, HOME=tmp, CLAUDE_BIN=str(claude), FAKE_STATE=str(Path(tmp, "state")))
+            env.pop("CLAUDE_CONFIG_DIR", None)
+            result = subprocess.run([str(SCENARIOS / "benchmark.sh"), "--config-dir", str(bench), "--continuity",
+                                     "--runs", "1", "--models", "fake", "--out", str(out)],
+                                    env=env, capture_output=True, text=True, timeout=300)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            report = out.read_text()
+            self.assertFalse((bench / ".devops-kit-manifest.json").exists())  # uninstalled at the end
+            self.assertFalse(out.with_suffix(".tsv").exists())  # no empty without/with-kit table
+        runs = Path(re.search(r"Work copies and logs: (\S+)", result.stderr).group(1))
+        shutil.rmtree(runs, ignore_errors=True)
+        self.assertIn("Model: fake.", report)
+        self.assertIn("| valid runs | 1 / 1 | 1 / 1 |", report)
+
+    def test_bad_arguments_are_refused_before_spending(self):
+        for args in (["--runs", "0", "--tsv", "x"], ["--methods", "magic", "--tsv", "x"], []):
+            with self.subTest(args=args):
+                result = subprocess.run([str(SCENARIOS / "continuity.sh"), *args], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 2)
+
+    def test_fixture_dead_end_always_fails_and_patch_changes_one_line(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            shutil.copytree(SCENARIOS / "fixtures/continuity", tmp, dirs_exist_ok=True)
+            before = Path(tmp, "release/tags.yaml").read_text()
+            failed = subprocess.run(["tools/bump-tag.sh", "api", "1.4.2", "--inplace"], cwd=tmp, capture_output=True, text=True)
+            self.assertEqual((failed.returncode, Path(tmp, "release/tags.yaml").read_text()), (3, before))
+            subprocess.run(["tools/bump-tag.sh", "web", "2.0.1", "--patch"], cwd=tmp, check=True, capture_output=True)
+            after = Path(tmp, "release/tags.yaml").read_text()
+        changed = [(a, b) for a, b in zip(before.splitlines(), after.splitlines()) if a != b]
+        self.assertEqual(changed, [('    tag: "2.0.0"', '    tag: "2.0.1"')])
+        self.assertIn("--inplace", (SCENARIOS / "fixtures/continuity/docs/RELEASE.md").read_text())
+
 
 if __name__ == "__main__":
     unittest.main()
