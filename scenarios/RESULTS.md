@@ -2,6 +2,27 @@
 
 How to run: see [README.md](README.md) ("Benchmark"). Newest results first.
 
+## 2026-11-04 · scenario 13 (continuity) · kit main b06b57e (1.4.0 + /handoff) · claude-sonnet-5-5 · Claude Code 2.1.316
+
+`benchmark.sh --continuity --runs 3 --models sonnet`. Total spent: $2.97 (plus $0.31 for a one-off check that `/compact` and `/handoff` sent on stdin with `--resume` work as documented: the session id stays, cost is a running total, `compact_boundary` is emitted, `handoff` is in `slash_commands`).
+
+| | A: /compact | B: /handoff + new session |
+|---|---|---|
+| valid runs | 3 / 3 | 3 / 3 |
+| dead end met in part 1 (`--inplace` tried) | 0 / 3 | 0 / 3 |
+| dead-end retries in parts 2–3 (total) | 0 in 0 runs | 0 in 0 runs |
+| dead end written to the progress file after part 1 | – | 3 / 3 |
+| parts 2–3 that did the right next step | 6 / 6 | 6 / 6 |
+| tokens per run (avg, all calls) | 651,430 | 1,557,529 |
+| cost per run (avg) | $0.41 | $0.58 |
+
+### How to read it
+
+- **The right next step:** equal. On a short three-part task the `/compact` summary loses nothing that matters.
+- **Cost:** `/handoff` + a new session costs about 40% more (7 calls against 5; each new session loads the kit context again). Most extra tokens are cache reads, so tokens grow 2.4× but cost only 1.4×.
+- **Dead ends: not measured.** Sonnet read the script before running it and never tried the failing flag, so no run was planted. The fixture needs a failure whose cause is not in the source (see Findings in scenario 13). Opus was not run, because it would meet the same flaw.
+- This small task cannot show the slow loss of detail after many compactions over several days; the two-week trial in `docs/proposals/0001-handoff-pickup.md` §10 covers that.
+
 ## 2026-11-01 · kit 1.2.0 + PRs #11–#14 + benchmark branch · claude-opus-5-5, claude-sonnet-5-5 · Claude Code 2.1.314
 
 Without the kit = a clean, separate config dir (only the skills claude.ai syncs to every account: docs, pdf, xlsx …, in both modes). With the kit = the same dir after `./install.sh` (rules, skills, agents, hook and permission rules). Work copies in `/tmp`, so no parent `CLAUDE.md` was loaded. Sandbox cluster up for 01–03 and 12. Scenario 04 is manual only.

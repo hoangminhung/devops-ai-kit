@@ -48,4 +48,6 @@ A run is **invalid** (not counted) when a call failed or gave no result, part 1 
 
 ## Findings
 
-- Not run yet. Estimated cost and the decision to run: see the PR that added this scenario.
+- 2026-11-04, Sonnet, 3 runs per method (`RESULTS.md`): both methods did the right next step in 6 / 6 parts; `/handoff` cost $0.58 per run against $0.41 for `/compact`, because each new session loads the kit context again.
+- **The dead end was never met** (0 / 6 runs tried `--inplace`): Sonnet read `tools/bump-tag.sh` before running it, saw that `--inplace` always exits 3, and used `--patch`. The fixture must hide the cause of the failure (for example, fail at run time on a condition the source does not show) before this scenario can measure retries.
+- The `retries` count also matched commands that only wrote the word `--inplace` into the progress file (3 in one `/handoff` run). They did not count, because no run was planted, but the check must match only real `bump-tag.sh` calls.

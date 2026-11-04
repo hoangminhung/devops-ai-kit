@@ -1,10 +1,12 @@
 # Changelog
 
-## Unreleased
+## 1.5.0 — 2026-11-04
+
+**Upgrade note:** after `./install.sh`, restart Claude Code so the new skill loads. Nothing is denied or allowed differently: the hook and the permission rules are the same as in 1.4.0; only the `00-core` §9 text and the progress file template change. Existing progress files keep working. To add the new parts, compare your file with `templates/PROGRESS.md`, or check in the change that `/handoff` shows you before it writes that the missing parts are added.
 
 - New skill `/handoff` (trial): before `/clear`, it saves the session state to the progress file. It rebuilds **Current state** and **Next steps** from what was checked, adds this session's **Dead ends — do not retry** (each with `revisit if:`), reads an active `/infra-task` folder only through `plan_status.py status` (never edits it), checks the file's hash before writing so another session's change is merged, and asks once. Design and trial plan: `docs/proposals/0001-handoff-pickup.md`.
 - `templates/PROGRESS.md` and `00-core` §9: new parts **Next steps** and **Dead ends — do not retry**; live facts carry `checked: <date>`. Guide §5.6 (en/vi): short task → `/clear` only; long task, a dead end, or a switch of machine or interface → `/handoff` first; transcripts are kept for `cleanupPeriodDays` (default 30).
-- Scenario 13 and `benchmark.sh --continuity [--runs N]`: a three-part release carried by `/compact` (one session) or by `/handoff` + a new session; measures tokens, dead-end retries and the right next step. Not run yet (costs tokens).
+- Scenario 13 and `benchmark.sh --continuity [--runs N]`: a three-part release carried by `/compact` (one session) or by `/handoff` + a new session; measures tokens, dead-end retries and the right next step. First run with Sonnet in `scenarios/RESULTS.md`: both methods did the right next step 6 / 6, `/handoff` cost about 40% more, and the dead-end question is still open (see Findings in scenario 13).
 
 ## 1.4.0 — 2026-11-03
 
