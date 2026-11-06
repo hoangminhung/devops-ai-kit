@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare Kubernetes Secrets without printing their values (devops-ai-kit).
+"""Compare Kubernetes Secrets and .env files without printing their values (devops-ai-kit).
 
 The kit never lets the AI print a secret value: it would end up in the chat, in
 the session transcript on disk and at the model provider. Most of the time the
@@ -14,7 +14,11 @@ Usage:
   secret_fingerprint.py SPEC OTHER_SPEC          # compare two Secrets key by key
   secret_fingerprint.py SPEC --env KEY=ENV_VAR   # compare one key with a value the user exported
 
-SPEC is [context:]namespace/name, for example `aks-prod-ro:shop/db-credentials`.
+SPEC is [context:]namespace/name, for example `aks-prod-ro:shop/db-credentials`, or file:PATH for a
+dotenv file (`KEY=VALUE`, `export KEY=VALUE`, quotes, `#` comments), for example `file:.env`:
+  secret_fingerprint.py file:.env                                  # key names, sizes, kinds
+  secret_fingerprint.py file:.env aks-prod-ro:shop/db-credentials  # a .env against a cluster Secret
+Lines that are not KEY=VALUE are counted, never shown.
 Exit code: 0 when everything compared is equal (or nothing was compared), 1 when
 something differs or is missing, 2 on errors (bad SPEC, kubectl failed).
 """
@@ -36,8 +40,54 @@ SPEC_RE = re.compile(r"^(?:(?P<context>[^\s-]\S*):)?(?P<namespace>[a-z0-9]([a-z0
 BASE64_RUN = re.compile(r"(?=[A-Za-z0-9+/]*[0-9+/=])[A-Za-z0-9+/=]{8,}")  # needs a digit, + / or =: keeps "NotFound"
 
 
+DOTENV_KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]*")
+TFSTATE_NAME = re.compile(r"[^\\/]*\.tfstate(?:\.[^/]*)?")
+
+
 class SpecError(Exception):
     pass
+
+
+def parse_dotenv(raw):
+    """{key: bytes} of a dotenv file, and the number of lines that are not KEY=VALUE (never echoed)."""
+    data, bad = {}, 0
+    for line in raw.splitlines():
+        text = line.strip()
+        if not text or text.startswith(b"#"):
+            continue
+        if text.startswith(b"export ") or text.startswith(b"export\t"):
+            text = text[7:].lstrip()
+        key, sep, value = text.partition(b"=")
+        key = key.strip()
+        try:
+            name = key.decode("ascii")
+        except UnicodeDecodeError:
+            name = ""
+        if not sep or not DOTENV_KEY.fullmatch(name):
+            bad += 1
+            continue
+        value = value.strip()
+        if value[:1] in (b"'", b'"'):
+            end = value.find(value[:1], 1)
+            value = value[1:end] if end > 0 else value[1:]
+        else:
+            value = re.split(rb"\s+#", value, maxsplit=1)[0].rstrip()
+        data[name] = value
+    return data, bad
+
+
+def read_file(spec):
+    path = spec[len("file:"):]
+    if not path:
+        raise SpecError("bad SPEC 'file:': give a path, e.g. file:.env")
+    if TFSTATE_NAME.fullmatch(os.path.basename(path.rstrip("/"))):
+        raise SpecError(f"{spec}: a Terraform state file is not a dotenv file (use `terraform state list`)")
+    try:
+        with open(path, "rb") as handle:
+            raw = handle.read()
+    except OSError as exc:
+        raise SpecError(f"{spec}: cannot read ({exc.strerror})")
+    return parse_dotenv(raw)
 
 
 def parse_spec(text):
@@ -45,6 +95,13 @@ def parse_spec(text):
     if not match:
         raise SpecError(f"bad SPEC {text!r}: use [context:]namespace/name")
     return match.group("context"), match.group("namespace"), match.group("name")
+
+
+def read_spec(spec):
+    """({key: bytes}, number of unparsed lines) of a Secret or a file:PATH."""
+    if spec.startswith("file:"):
+        return read_file(spec)
+    return read_secret(spec), 0
 
 
 def read_secret(spec):
@@ -98,8 +155,8 @@ def compare(a, b):
     return "differ"
 
 
-def describe(spec, data):
-    lines = [f"{spec}: {len(data)} key(s)"]
+def describe(spec, data, bad=0):
+    lines = [f"{spec}: {len(data)} key(s)" + (f", {bad} line(s) not KEY=VALUE (not shown)" if bad else "")]
     for key in sorted(data):
         lines.append(f"  {key}: {len(data[key])} bytes, {kind(data[key])}")
     return lines, True
@@ -140,16 +197,16 @@ def compare_env(spec, data, pairs):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Compare Kubernetes Secrets without printing values.")
+    parser = argparse.ArgumentParser(description="Compare Kubernetes Secrets and .env files without printing values.")
     parser.add_argument("spec")
     parser.add_argument("other", nargs="?")
     parser.add_argument("--env", action="append", default=[], metavar="KEY=ENV_VAR")
     args = parser.parse_args(argv)
     try:
-        data = read_secret(args.spec)
-        lines, ok = describe(args.spec, data)
+        data, bad = read_spec(args.spec)
+        lines, ok = describe(args.spec, data, bad)
         if args.other:
-            more, ok = compare_secrets(args.spec, data, args.other, read_secret(args.other))
+            more, ok = compare_secrets(args.spec, data, args.other, read_spec(args.other)[0])
             lines += more
         if args.env:
             more, env_ok = compare_env(args.spec, data, args.env)

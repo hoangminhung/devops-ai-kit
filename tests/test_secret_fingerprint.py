@@ -122,6 +122,46 @@ class SecretFingerprint(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("not a Secret with base64 data", result.stderr)
 
+    def dotenv(self, text, name=".env"):
+        folder = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, folder)
+        path = Path(folder, name)
+        path.write_text(text)
+        return path
+
+    def test_dotenv_names_sizes_and_kinds_only(self):
+        path = self.dotenv("# app\nDB_HOST=db.internal\nexport DB_USER='app'\nDB_PASSWORD=\"S3cret-value\"  \n"
+                           "DB_PORT=5432 # default\n\nS3cret-orphan-line\nnot a key=S3cret-x\nEMPTY=\n")
+        result = self.run_script(f"file:{path}")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("5 key(s), 2 line(s) not KEY=VALUE (not shown)", result.stdout)
+        self.assertIn("DB_PASSWORD: 12 bytes, text", result.stdout)
+        self.assertIn("DB_USER: 3 bytes, text", result.stdout)
+        self.assertIn("DB_PORT: 4 bytes", result.stdout)
+        self.assertIn("EMPTY: 0 bytes, empty", result.stdout)
+        self.assertNotIn("db.internal", result.stdout)
+
+    def test_dotenv_compared_with_a_secret_and_a_file(self):
+        path = self.dotenv("password=S3cret-value\nuser=app\n")
+        result = self.run_script(f"file:{path}", "prod:shop/db")
+        self.assertIn("password: match", result.stdout)
+        self.assertIn("ca.crt: only in prod:shop/db", result.stdout)
+        other = self.dotenv("password=S3cret-valuX\nuser=app\n", ".env.prod")
+        result = self.run_script(f"file:{path}", f"file:{other}")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("password: differ (12 / 12 bytes)", result.stdout)
+        self.assertIn("user: match", result.stdout)
+
+    def test_dotenv_errors_name_the_path_not_the_content(self):
+        result = self.run_script("file:/no/such/.env")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("cannot read (No such file or directory)", result.stderr)
+        self.assertEqual(self.run_script("file:").returncode, 2)
+        state = self.dotenv('{"outputs": {"pw": "S3cret-value"}}', "terraform.tfstate")
+        result = self.run_script(f"file:{state}")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("Terraform state file is not a dotenv file", result.stderr)
+
     def test_kubectl_errors_do_not_echo_response_bodies(self):
         result = self.run_script("shop/noisy")
         self.assertEqual(result.returncode, 2)
