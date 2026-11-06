@@ -2,9 +2,13 @@
 # Run the scenarios WITHOUT and WITH the kit, on one or more models, and write a comparison table.
 #
 #   scenarios/benchmark.sh --config-dir ~/.claude-bench [--models "opus sonnet"] [--scenarios "05 06"] [--runs N] [--out FILE]
+#   scenarios/benchmark.sh --config-dir ~/.claude-bench --isolation container --runs 3 [--models "sonnet"]
 #   scenarios/benchmark.sh --config-dir ~/.claude-bench --continuity [--runs 3] [--models "opus"]
 #
 # --runs N repeats every cell N times (default 1; use 3 for a release: a single run says little).
+# --isolation container runs the approve-all scenarios (`Isolation: container`, 14-23) instead of the
+# deny-mode ones: each session runs in the bench container (scenarios/isolation/) and every permission
+# prompt is approved, in both arms. Needs docker. Without it those scenarios are left out.
 # --continuity runs only scenario 13 (continuity.sh), with the kit installed: /compact vs /handoff,
 # --runs times per method and model, and writes that comparison instead of the without/with-kit table.
 #
@@ -20,7 +24,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 KIT="$(dirname "$HERE")"
-CONFIG_DIR="" MODELS="opus sonnet" SCENARIOS="" OUT="" CONTINUITY="" RUNS_N=""
+CONFIG_DIR="" MODELS="opus sonnet" SCENARIOS="" OUT="" CONTINUITY="" RUNS_N="" ISOLATION=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --config-dir) CONFIG_DIR="$2"; shift 2 ;;
@@ -29,6 +33,7 @@ while [[ $# -gt 0 ]]; do
     --out) OUT="$2"; shift 2 ;;
     --continuity) CONTINUITY=1; shift ;;
     --runs) RUNS_N="$2"; shift 2 ;;
+    --isolation) ISOLATION="$2"; shift 2 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -49,8 +54,26 @@ done
 RUNS_N="${RUNS_N:-$([[ -n "$CONTINUITY" ]] && echo 3 || echo 1)}"
 [[ "$RUNS_N" =~ ^[1-9][0-9]*$ ]] || { echo "--runs must be a positive number" >&2; exit 2; }
 [[ -z "$CONTINUITY" || -z "$SCENARIOS" ]] || { echo "--continuity runs only scenario 13; drop --scenarios" >&2; exit 2; }
+[[ -z "$ISOLATION" || "$ISOLATION" == container ]] || { echo "--isolation takes only: container" >&2; exit 2; }
+[[ -z "$CONTINUITY" || -z "$ISOLATION" ]] || { echo "--continuity and --isolation do not mix" >&2; exit 2; }
+is_container() { grep -q '^- \*\*Isolation:\*\* `\{0,1\}container' "$1"; }
 if [[ -z "$SCENARIOS" ]]; then
-  SCENARIOS="$(grep -l '^```check$' "$HERE"/[0-9][0-9]-*.md | xargs -n1 basename | cut -c1-2 | tr '\n' ' ')"
+  # Default: the deny-mode scenarios; with --isolation container: the approve-all scenarios.
+  for file in $(grep -l '^```check$' "$HERE"/[0-9][0-9]-*.md); do
+    if is_container "$file"; then want=container; else want=""; fi
+    if [[ "$want" == "$ISOLATION" ]]; then SCENARIOS+="$(basename "$file" | cut -c1-2) "; fi
+  done
+fi
+if [[ "$ISOLATION" == container ]]; then
+  command -v docker >/dev/null || { echo "docker is needed for --isolation container" >&2; exit 1; }
+  # One container benchmark at a time: they share the proxy container and the bench login.
+  exec 9>"/tmp/devops-kit-bench-$(id -u).lock"
+  flock -n 9 || { echo "another container benchmark is running" >&2; exit 1; }
+  # Approve-all relies on --permission-prompts host + --permission-prompt-tool answering every prompt:
+  # flag from 2.1.259; behaviour checked on 2.1.316 (RFC 0002 §10.1). Re-run the probe on a newer major.
+  version="$("${CLAUDE_BIN:-claude}" --version 2>/dev/null | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' || true)"
+  python3 -c 'import sys; v = tuple(map(int, sys.argv[1].split("."))); sys.exit(0 if v >= (2, 1, 259) else 1)' \
+    "${version:-0.0.0}" || { echo "--isolation container needs Claude Code >= 2.1.259 (found ${version:-none})" >&2; exit 1; }
 fi
 for nn in $SCENARIOS; do
   [[ "$nn" =~ ^[0-9][0-9]$ ]] && compgen -G "$HERE/${nn}-*.md" >/dev/null \
@@ -61,7 +84,7 @@ OUT="${OUT:-$HERE/.runs/benchmark-$STAMP.md}"
 mkdir -p "$(dirname "$OUT")"
 TSV="${OUT%.md}.tsv"
 RUNS="$(mktemp -d /tmp/devops-kit-bench.XXXXXX)"
-[[ -n "$CONTINUITY" ]] || printf 'mode\tmodel\tscenario\trun\tresult\tp_pass\tp_total\to_pass\to_total\tprompts\tcost\tturns\tcontext\tlog\n' > "$TSV"
+[[ -n "$CONTINUITY" ]] || printf 'mode\tmodel\tscenario\trun\tresult\tp_pass\tp_total\to_pass\to_total\tprompts\tcost\tturns\tcontext\tlog\tkind\tapproved\trisky_prompted\trisky_unprompted\texposed\tdisclosed\tpeeks\terr_harm\tblocked_hook\tblocked_permission\n' > "$TSV"
 
 uninstall_kit() { CLAUDE_CONFIG_DIR="$CONFIG_DIR" "$KIT/uninstall.sh" >/dev/null 2>&1 || true; }
 trap uninstall_kit EXIT
@@ -112,7 +135,7 @@ if [[ -n "$CONTINUITY" ]]; then
 fi
 
 run_mode() { # run_mode <nokit|kit>
-  local mode="$1" model nn run line result log m scores no_kit=""
+  local mode="$1" model nn run line result log m scores kind o err_harm eline escore ep et no_kit=""
   if [[ "$mode" == nokit ]]; then
     uninstall_kit; assert_no_kit; no_kit=1
   else
@@ -136,9 +159,35 @@ run_mode() { # run_mode <nokit|kit>
         elif [[ "$result" != SKIP ]]; then
           result=ERROR
         fi
-        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$mode" "$model" "$nn" "$run" "$result" "$scores" \
-          "$(jq -r '[.prompts, .cost, .turns, .context] | map(tostring) | join("\t")' <<<"$m")" "$log" >> "$TSV"
+        # Approve-all scenarios: kind (harmful|benign) and the outcome numbers of graders/grade.py summary.
+        kind="$(sed -n 's/^- \*\*Kind:\*\* \([a-z]*\).*/\1/p' "$(find "$HERE" -maxdepth 1 -name "${nn}-*.md" | head -1)")"
+        o='{}'
+        if [[ -n "$kind" && -n "$log" && -f "$log" ]]; then
+          o="$(python3 "$HERE/graders/grade.py" --log "$log" --work "$(dirname "$log")/repo" summary 2>/dev/null || echo '{}')"
+        fi
+        err_harm=""
+        # Only harmful and gate scenarios: a benign ERROR fails its "task not done" checks, which is not harm.
+        if [[ "$kind" =~ ^(harmful|gate)$ && "$result" == ERROR && -n "$log" && -f "$log" ]]; then
+          # An ERROR trial is not counted, but harm done before the error must not be hidden: grade anyway.
+          eline="$(GRADE_IGNORE_SESSION=1 "$HERE/run-headless.sh" --grade-only "$log" "$nn" 2>/dev/null || true)"
+          escore="$(sed -n 's/.* O=\([0-9]*\)\/\([0-9]*\).*/\1 \2/p' <<<"$eline")"
+          if [[ -n "$escore" ]]; then
+            read -r ep et <<<"$escore"
+            err_harm=$([[ "$ep" -lt "$et" ]] && echo 1 || echo 0)
+          fi
+        fi
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$mode" "$model" "$nn" "$run" "$result" "$scores" \
+          "$(jq -r '[.prompts, .cost, .turns, .context] | map(tostring) | join("\t")' <<<"$m")" "$log" "$kind" \
+          "$(jq -r '[.approved, .risky_prompted, .risky_unprompted, .exposed, .disclosed, .peeks] | map(if . == null then "" else tostring end) | join("\t")' <<<"$o")" \
+          "$err_harm" "$(jq -r '[.blocked_hook, .blocked_permission] | map(if . == null then "" else tostring end) | join("\t")' <<<"$o")" >> "$TSV"
         echo "$mode $model $nn run $run $result $(jq -c . <<<"$m")" >&2
+        if [[ -n "$log" && -f "$log" ]] \
+          && jq -e -R 'fromjson? | select(.type == "result" and .api_error_status == 429)' "$log" >/dev/null 2>&1; then
+          # Rate or spend limit of the bench account: every next session would fail the same way.
+          echo "stopped: the API answered 429 ($(jq -r -R 'fromjson? | select(.type == "result") | .result' "$log" \
+            | head -1 | cut -c1-160)). Partial results: $TSV" >&2
+          exit 3
+        fi
         [[ "$result" != SKIP ]] || break   # a skipped scenario is skipped in every run
       done
     done

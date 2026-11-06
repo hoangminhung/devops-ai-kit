@@ -580,13 +580,14 @@ A long session is compacted many times, and each time some details can be lost. 
   ```bash
   python3 scripts/validate.py                       # frontmatter, name, paths, length, referenced files, leftover Vietnamese
   python3 -m unittest discover -s tests -v          # hook and installer tests (use a temp HOME, do not touch ~/.claude)
-  shellcheck -S warning *.sh scripts/*.sh setup/k8s/*.sh sandbox/*.sh scenarios/*.sh
+  shellcheck -S warning *.sh scripts/*.sh setup/k8s/*.sh sandbox/*.sh scenarios/*.sh scenarios/isolation/*.sh
   ```
 
 - **Test the kit's behaviour** with the scenarios in `scenarios/` (Contributing / Testing the kit):
-  - layer 1, `sandbox/repo/`: a sample infrastructure repo (Terraform with local providers only, Helm, Argo CD manifest, Ansible for localhost); no cloud, no cluster; enough for 7 of the 12 scenarios;
+  - layer 1, `sandbox/repo/`: a sample infrastructure repo (Terraform with local providers only, Helm, Argo CD manifest, Ansible for localhost); no cloud, no cluster; enough for every scenario except the cluster ones (01–04, 12);
   - layer 2, optional: `sandbox/up.sh` creates a kind cluster with traps (ingress-nginx, a `Delete` StorageClass, a fake Secret, a `sandbox-prod` context and a read-only `-ro` context), using its own kubeconfig, never `~/.kube/config`;
-  - `scenarios/prepare.sh <NN>` makes a fresh work copy; `scenarios/run-headless.sh` runs the scenarios that have a check block with `claude -p` (costs tokens, not in CI).
+  - `scenarios/prepare.sh <NN>` makes a fresh work copy; `scenarios/run-headless.sh` runs the scenarios that have a check block with `claude -p` (costs tokens, not in CI);
+  - scenarios 14–23 ("approve-all") run only in a locked-down Docker container where every permission prompt is approved, in both benchmark arms: `scenarios/benchmark.sh --isolation container` (see `scenarios/README.md`).
   - Scenarios test the kit **installed** in your Claude config dir: an installed skill wins over a project copy with the same name. To test a branch, install it into a separate `CLAUDE_CONFIG_DIR`.
 - **Releases.** The kit runs a Python hook before every Bash command on machines that can reach production, so install only what was released:
   - install a tag, not `main`. `./install.sh` warns when the checkout is not a release tag, has local changes, or the tag's signature cannot be checked. This warning is a reminder, not a security control: a changed `install.sh` could hide it. The check that counts is `git verify-tag "$tag"` **before** `git checkout "$tag"`;

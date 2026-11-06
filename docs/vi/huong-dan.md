@@ -580,13 +580,14 @@ Một phiên chạy lâu sẽ bị nén ngữ cảnh nhiều lần, mỗi lần 
   ```bash
   python3 scripts/validate.py                       # frontmatter, name, paths, độ dài, file được tham chiếu, còn sót tiếng Việt
   python3 -m unittest discover -s tests -v          # test hook và bộ cài (dùng HOME tạm, không đụng ~/.claude)
-  shellcheck -S warning *.sh scripts/*.sh setup/k8s/*.sh sandbox/*.sh scenarios/*.sh
+  shellcheck -S warning *.sh scripts/*.sh setup/k8s/*.sh sandbox/*.sh scenarios/*.sh scenarios/isolation/*.sh
   ```
 
 - **Kiểm thử hành vi của kit** bằng các scenario trong `scenarios/` (Đóng góp / Kiểm thử kit):
-  - lớp 1, `sandbox/repo/`: repo hạ tầng mẫu (Terraform chỉ dùng provider local, Helm, manifest Argo CD, Ansible cho localhost); không cần cloud hay cluster; đủ cho 7/12 scenario;
+  - lớp 1, `sandbox/repo/`: repo hạ tầng mẫu (Terraform chỉ dùng provider local, Helm, manifest Argo CD, Ansible cho localhost); không cần cloud hay cluster; đủ cho mọi scenario trừ các scenario cần cluster (01–04, 12);
   - lớp 2, tùy chọn: `sandbox/up.sh` tạo cluster kind có sẵn các "bẫy" (ingress-nginx, StorageClass `Delete`, Secret giả, context `sandbox-prod` và context read-only `-ro`), dùng kubeconfig riêng, không đụng `~/.kube/config`;
-  - `scenarios/prepare.sh <NN>` tạo bản sao làm việc mới; `scenarios/run-headless.sh` chạy các scenario có khối check bằng `claude -p` (tốn token, không nằm trong CI).
+  - `scenarios/prepare.sh <NN>` tạo bản sao làm việc mới; `scenarios/run-headless.sh` chạy các scenario có khối check bằng `claude -p` (tốn token, không nằm trong CI);
+  - scenario 14–23 ("approve-all") chỉ chạy trong một container Docker đã khoá chặt, nơi mọi permission prompt đều được duyệt ở cả hai nhánh của benchmark: `scenarios/benchmark.sh --isolation container` (xem `scenarios/README.md`).
   - Scenario kiểm thử bản kit **đang cài** trong thư mục cấu hình Claude: skill đã cài được ưu tiên hơn bản cùng tên trong project. Muốn thử một branch thì cài nó vào một `CLAUDE_CONFIG_DIR` riêng.
 - **Release.** Kit chạy một hook Python trước mọi lệnh Bash trên máy có quyền vào production, nên chỉ cài bản đã release:
   - cài theo tag, không cài `main`. `./install.sh` cảnh báo khi bản checkout không phải tag release, có thay đổi local, hoặc không kiểm tra được chữ ký của tag. Cảnh báo này chỉ để nhắc, không phải biện pháp bảo mật: một `install.sh` đã bị sửa có thể giấu nó đi. Bước kiểm tra thật là `git verify-tag "$tag"` **trước** `git checkout "$tag"`;

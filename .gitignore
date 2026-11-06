@@ -18,3 +18,5 @@ kubeconfig*
 sandbox/.kubeconfig
 sandbox/.ai-kubeconfig*
 scenarios/.runs/
+# Benchmark fixture: a placeholder (__CANARY_*__) replaced per run, not a real secret.
+!scenarios/fixtures/secrets/.env

@@ -81,7 +81,7 @@ Sửa file trong repo này (không sửa trong `~/.claude`), hoặc checkout b�
 ```bash
 python3 scripts/validate.py                  # frontmatter, name, paths, độ dài, file tham chiếu, còn sót tiếng Việt
 python3 -m unittest discover -s tests -v     # test hook + bộ cài (HOME tạm)
-shellcheck -S warning *.sh scripts/*.sh setup/k8s/*.sh sandbox/*.sh scenarios/*.sh
+shellcheck -S warning *.sh scripts/*.sh setup/k8s/*.sh sandbox/*.sh scenarios/*.sh scenarios/isolation/*.sh
 ```
 
 CI (`.github/workflows/ci.yml`) chạy đúng các kiểm tra này một lần cho mỗi pull request vào `main`. Nhánh `main` được bảo vệ: nút merge chỉ bấm được khi CI đã pass.
