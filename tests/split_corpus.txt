@@ -1,6 +1,6 @@
 %% Commands and the hook decision for each (RFC 0003). Placeholders: TFSTATE, KDEL, GRP, ALT (|), TFAPPLY.
 %% `(main: …)` is the decision of the hook before the quote-aware split, stored when this file was made;
-%% an entry is weaker than it only for a lone grep (the false positive of a `|` inside quotes).
+%% no entry is weaker than it (the hook checks the plain pieces as before, plus whole segments).
 %% Format: `<tool> <decision> (main: <decision>)`, then the command, then `====`. Header lines start with %%.
 Bash deny (main: deny)
 echo $'\'' ; KDEL ; echo \'
@@ -423,40 +423,40 @@ echo "`true ; GRP x TFSTATE`"
 Bash deny (main: deny)
 echo "`printf '"'` ; KDEL ; echo "`printf '"'`"
 ====
-Bash pass (main: deny)
+Bash deny (main: deny)
 GRP -rnE 'DB ALT PG' EXC .
 ====
 Bash deny (main: deny)
 cd "$HOME" && GRP -rnE 'DB ALT PG' EXC .
 ====
-Bash pass (main: deny)
+Bash deny (main: deny)
 GRP -rnE 'DB ALT PG' EXC . 2>/dev/null ALT head -50
 ====
 Bash deny (main: deny)
 GRP -rnE 'DB ALT PG' EXC . ALT GRP -v '#'
 ====
-Bash pass (main: deny)
+Bash deny (main: deny)
 GRP -rnE '^(DB ALT PG)_[A-Z_]+=' EXC .
 ====
 Bash deny (main: deny)
 GRP -rnE '(DB ALT PG)_[A-Z]+$' EXC .
 ====
-Bash pass (main: deny)
+Bash deny (main: deny)
 GRP -rnE 'process\.env\.(DB ALT PG)' EXC --exclude-dir=node_modules .
 ====
-Bash pass (main: deny)
+Bash deny (main: deny)
 GRP -rnE 'getenv\("(DB ALT PG)' EXC .
 ====
 Bash deny (main: deny)
 GRP -rnE '\$\{?(DB ALT PG)' EXC .
 ====
-Bash pass (main: deny)
+Bash deny (main: deny)
 GRP -rnE 'DB ALT PG' EXC --include='*.{yml,yaml,env}' .
 ====
-Bash pass (main: deny)
+Bash deny (main: deny)
 GRP -rn 'DB\ALT PG' EXC .
 ====
-Bash pass (main: deny)
+Bash deny (main: deny)
 GRP -rnE "DB ALT PG" EXC .
 ====
 Bash deny (main: deny)
@@ -573,7 +573,7 @@ find . -name x -exec sh -c 'cat TFSTATE; true' \;
 Bash pass (main: pass)
 git commit -m 'fix: run terraform apply; done'
 ====
-Bash pass (main: deny)
+Bash deny (main: deny)
 GRP -rnE 'DBALTPG' --exclude='*.tfstate*' .
 ====
 Bash deny (main: deny)

@@ -53,7 +53,7 @@ PROD_RE = re.compile(
 BLOCK_PROD = os.environ.get("DEVOPS_KIT_BLOCK_PROD", "1") != "0"
 DEV_PATTERN = os.environ.get("DEVOPS_KIT_DEV_PATTERN", "")
 
-SEGMENT_SPLIT = re.compile(r"&&|\|\||;|\||\n")  # only for text with unbalanced quotes: see split_segments
+SEGMENT_SPLIT = re.compile(r"&&|\|\||;|\||\n")  # the plain split, also inside quotes: every piece is checked
 HEREDOC = re.compile(r"<<(-?)\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2")
 ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 # Wrapper commands and their flags that take a value.
@@ -122,7 +122,6 @@ GIT_PRINTS_FILES = {"show", "diff", "cat-file", "blame", "grep", "archive", "for
 GIT_PATCH_FLAGS = ("-p", "-u", "-U", "--patch", "--word-diff", "--cc", "--color-words", "-L")
 GREP_TOOLS = {"grep", "egrep", "fgrep", "zgrep", "rg", "ag", "ack"}
 ALWAYS_RECURSIVE = {"rg", "ag", "ack"}
-GREP_RUNS_PROGRAM = ("--pre", "--hostname-bin", "--pager")  # rg, rg, ag/ack: run a command given as a value
 # Commands that pass a file name from elsewhere (a pipe, a loop, a variable) to another command.
 INDIRECT = {"xargs", "parallel", "while", "read", "for", "eval", "source", "."}
 # Copy or pack a whole folder: a state file inside is copied in clear text (`tar cf - .`).
@@ -1483,17 +1482,14 @@ def analyse_command(command, cwd, depth=0):
         for inner in re.findall(r"\$\(([^()]*)\)|<\(([^()]*)\)|`([^`]*)`", unquoted):
             hits.extend(analyse_command(next(part for part in inner if part), cwd, depth + 1))
         inline_code_reads_state(command, cwd)
-    # Only a grep-like segment is taken as split_segments gives it (`grep -E 'DB|PG' --exclude=… .` is one
-    # command). Every other segment is checked whole AND in the pieces of the plain split, because quoted text
-    # may be code that another program runs (`ssh host 'cd x; terraform apply …'`, `ksh -c '…; …'`): the plain
-    # split catches those pieces, so the hook is never weaker than with the plain split (RFC 0003 §2.2).
-    # A grep that runs another program (`rg --pre`, `rg --hostname-bin`, `ag/ack --pager`) is not exempt.
+    # Each segment is checked whole (split outside quotes: `sh -c "kubectl … | cat"` reaches the nested-shell check
+    # in one piece) AND in the pieces of the plain split, which also cuts inside quotes. The plain pieces are what
+    # this hook checked before RFC 0003, so it can only get stricter: quoted text may be code another program
+    # runs (`ssh host 'cd x; terraform apply …'`, `ksh -c '…; …'`), and a grep exemption read `.env` values
+    # (RFC 0003 §2.2, rounds 4–5).
     segments = []
     for seg in split_segments(command):
-        toks, _ = peel(tokenize(seg))
-        base = re.split(r"[\\/]", toks[0])[-1] if toks else ""
-        runs_program = any(t.startswith(GREP_RUNS_PROGRAM) for t in toks[1:])
-        pieces = [seg] if base in GREP_TOOLS and not runs_program else [seg] + SEGMENT_SPLIT.split(seg)
+        pieces = [seg] + SEGMENT_SPLIT.split(seg)
         segments += [p.strip() for p in dict.fromkeys(pieces) if p.strip()]
     for segment in segments:
         # `export KUBECONFIG=...; kubectl ...` must use the exported file for the later segments.

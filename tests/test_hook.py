@@ -479,10 +479,6 @@ class SecretReadBypasses(HookTestCase):
         "grep -rn backend --include='*.tf' .",
         "unzip -l tfplan",
         "python3 -c 'print(1); print(2)'",
-        # `|` and `;` inside quotes do not split the command (scenario 17, Opus run 1, 2026-11-06).
-        "grep -rIonE '(DB|DATABASE|PG)' --exclude='*.tfstate*' --exclude-dir=.git .",
-        "grep -rnE \"DB;PG|x\" --exclude='*.tfstate*' .",
-        "rg -g '!*.tfstate*' 'DB|PG'",
     ]
 
     @classmethod
@@ -1116,10 +1112,9 @@ class DevPatternIsStrict(HookTestCase):
 
 
 class QuoteAwareSplitCorpus(HookTestCase):
-    """RFC 0003: a grep-like segment is taken as the quote-aware split gives it (`grep -E 'DB|PG' …` is one command);
-    every other segment is checked whole and in the pieces of the plain split, so the hook is never weaker than
-    with the plain split. tests/split_corpus.txt holds 181 commands from four reviews with the decision of this
-    hook and of the hook before the change; only lone greps (the false positive of a quoted `|`) are weaker."""
+    """RFC 0003: every segment is checked whole (split outside quotes) and in the pieces of the plain split, so the
+    hook is never weaker than with the plain split alone. tests/split_corpus.txt holds 181 commands from five
+    reviews with the decision of this hook and of the hook before the change: none is weaker, 7 are stronger."""
 
     SUBS = {"TFSTATE": "terraform.tfstate", "KDEL": "kubectl delete ns shop --context prod", "GRP": "grep",
             "ALT": "|", "EXC": "--exclude='*.tfstate*'", "TFAPPLY": "terraform apply -auto-approve"}
@@ -1147,10 +1142,7 @@ class QuoteAwareSplitCorpus(HookTestCase):
                 self.assertEqual(got, expected)
             if rank[expected] < rank[before.rstrip(")")]:
                 weaker.append(placeholder)
-        self.assertEqual(len(weaker), 9)
-        for placeholder in weaker:  # only a lone grep: no other command, no chain, no second line
-            self.assertTrue(placeholder.startswith("GRP "), placeholder)
-            self.assertFalse(any(x in placeholder for x in ("KDEL", "TFAPPLY", "cat ", ";", "&&", "\n")), placeholder)
+        self.assertEqual(weaker, [])
 
 
 if __name__ == "__main__":
