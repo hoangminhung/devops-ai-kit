@@ -295,6 +295,8 @@ compare shop/db-credentials on aks-prod-ro with aks-stg-ro
 → username: match
 ```
 
+The same script reads a `.env` file: `secret_fingerprint.py file:.env` gives its key names and sizes, and `file:.env shop/db-credentials` compares it with a Secret. Commands that name the file to a reader (`cat .env`, `grep … .env`, `cut … .env`) are denied by the permission rules `Read(**/.env)`. Code that opens the file itself (`python3 -c …`, `bash -c …`) is not caught: approve such a prompt only after reading it.
+
 To check a value you have, export it in your shell before you start Claude (`export EXPECTED_DB_PW=...`) and ask Claude to compare `password` with `EXPECTED_DB_PW`.
 
 If you really need to see a value, run the command in your own terminal. The `!` prefix in Claude Code also runs it as you, but the output then goes into the chat and the transcript.

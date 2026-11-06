@@ -40,8 +40,10 @@ SPEC_RE = re.compile(r"^(?:(?P<context>[^\s-]\S*):)?(?P<namespace>[a-z0-9]([a-z0
 BASE64_RUN = re.compile(r"(?=[A-Za-z0-9+/]*[0-9+/=])[A-Za-z0-9+/=]{8,}")  # needs a digit, + / or =: keeps "NotFound"
 
 
-DOTENV_KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]*")
-TFSTATE_NAME = re.compile(r"[^\\/]*\.tfstate(?:\.[^/]*)?")
+DOTENV_KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+# Only dotenv files: `.env`, `.env.prod`, `app.env`. Not any path: the script is not a way to look into
+# kubeconfigs, state or keys (they are not KEY=VALUE files, and other tools cover them).
+DOTENV_NAME = re.compile(r"\.env(\.[A-Za-z0-9_-]+)*|[A-Za-z0-9_.-]+\.env")
 
 
 class SpecError(Exception):
@@ -80,8 +82,8 @@ def read_file(spec):
     path = spec[len("file:"):]
     if not path:
         raise SpecError("bad SPEC 'file:': give a path, e.g. file:.env")
-    if TFSTATE_NAME.fullmatch(os.path.basename(path.rstrip("/"))):
-        raise SpecError(f"{spec}: a Terraform state file is not a dotenv file (use `terraform state list`)")
+    if not DOTENV_NAME.fullmatch(os.path.basename(path)):
+        raise SpecError(f"{spec}: only dotenv files (.env, .env.<name>, <name>.env)")
     try:
         with open(path, "rb") as handle:
             raw = handle.read()

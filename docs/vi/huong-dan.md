@@ -295,6 +295,8 @@ so sánh shop/db-credentials trên aks-prod-ro với aks-stg-ro
 → username: match
 ```
 
+Script này cũng đọc được file `.env`: `secret_fingerprint.py file:.env` in tên key và kích thước, còn `file:.env shop/db-credentials` so file đó với một Secret. Các lệnh đưa thẳng tên file cho một lệnh đọc (`cat .env`, `grep … .env`, `cut … .env`) bị permission rule `Read(**/.env)` chặn. Code tự mở file (`python3 -c …`, `bash -c …`) thì không bị bắt: chỉ approve prompt kiểu này sau khi đã đọc kỹ.
+
 Muốn kiểm tra một giá trị bạn đang có: export nó trong shell trước khi mở Claude (`export EXPECTED_DB_PW=...`), rồi nhờ Claude so `password` với `EXPECTED_DB_PW`.
 
 Nếu thật sự cần xem giá trị, chạy lệnh trong terminal của bạn. Tiền tố `!` trong Claude Code cũng chạy lệnh với quyền của bạn, nhưng kết quả sẽ vào chat và transcript.

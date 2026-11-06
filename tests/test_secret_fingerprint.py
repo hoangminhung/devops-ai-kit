@@ -157,10 +157,27 @@ class SecretFingerprint(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("cannot read (No such file or directory)", result.stderr)
         self.assertEqual(self.run_script("file:").returncode, 2)
-        state = self.dotenv('{"outputs": {"pw": "S3cret-value"}}', "terraform.tfstate")
-        result = self.run_script(f"file:{state}")
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("Terraform state file is not a dotenv file", result.stderr)
+
+    def test_only_dotenv_file_names(self):
+        for name in ("terraform.tfstate", "config", "id_rsa", "values-secret.yaml", "env", ".envrc"):
+            with self.subTest(name=name):
+                path = self.dotenv("pw=S3cret-value\n", name)
+                result = self.run_script(f"file:{path}")
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("only dotenv files", result.stderr)
+        for name in (".env", ".env.prod", ".env.local.example", "app.env"):
+            with self.subTest(name=name):
+                self.assertEqual(self.run_script(f"file:{self.dotenv('pw=S3cret-value', name)}").returncode, 0)
+
+    def test_lines_that_hold_values_are_never_read_as_key_names(self):
+        path = self.dotenv("client-key-data: LS0tS3cret==\n-----BEGIN PRIVATE KEY-----\nMIIS3cret+/=\n"
+                           "-----END PRIVATE KEY-----\nDATABASE_URL=postgres://u:S3cret@h/db?sslmode=require\n"
+                           "a.b=S3cret\nS3cret token=1\n")
+        result = self.run_script(f"file:{path}")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("1 key(s), 6 line(s) not KEY=VALUE (not shown)", result.stdout)
+        self.assertIn("DATABASE_URL:", result.stdout)
+        self.assertNotIn("LS0t", result.stdout)
 
     def test_kubectl_errors_do_not_echo_response_bodies(self):
         result = self.run_script("shop/noisy")

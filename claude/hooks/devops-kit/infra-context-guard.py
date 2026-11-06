@@ -53,7 +53,7 @@ PROD_RE = re.compile(
 BLOCK_PROD = os.environ.get("DEVOPS_KIT_BLOCK_PROD", "1") != "0"
 DEV_PATTERN = os.environ.get("DEVOPS_KIT_DEV_PATTERN", "")
 
-SEGMENT_SPLIT = re.compile(r"&&|\|\||;|\||\n")
+SEGMENT_SPLIT = re.compile(r"&&|\|\||;|\||\n")  # only for text with unbalanced quotes: see split_segments
 HEREDOC = re.compile(r"<<(-?)\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2")
 ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 # Wrapper commands and their flags that take a value.
@@ -1342,9 +1342,54 @@ def heredoc_start(line):
     return pos, delim, raw != delim, strip_tabs
 
 
+def split_segments(text):
+    """Split at `&&`, `||`, `;`, `|` and newlines outside quotes: `grep -E 'DB|PG' --exclude=x .` is one
+    command, not `grep -E 'DB` and `PG' --exclude=x .`. With unbalanced quotes the plain split is used
+    (it cuts more, so it checks more)."""
+    parts, current, i, quote = [], [], 0, ""
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            if ch == "\\" and quote == '"' and i + 1 < len(text):
+                current.append(text[i:i + 2])
+                i += 2
+                continue
+            if ch == quote:
+                quote = ""
+            current.append(ch)
+            i += 1
+            continue
+        if ch == "\\" and i + 1 < len(text):
+            current.append(text[i:i + 2])
+            i += 2
+            continue
+        if ch in "'\"":
+            quote = ch
+            current.append(ch)
+            i += 1
+            continue
+        two = text[i:i + 2]
+        if two in ("&&", "||"):
+            parts.append("".join(current))
+            current = []
+            i += 2
+            continue
+        if ch in ";|\n":
+            parts.append("".join(current))
+            current = []
+            i += 1
+            continue
+        current.append(ch)
+        i += 1
+    if quote:
+        return SEGMENT_SPLIT.split(text)
+    parts.append("".join(current))
+    return parts
+
+
 def data_feeder(text):
     """True when the command before `<<` only stores or applies data: cat/tee to a file, kubectl apply -f -."""
-    segments = SEGMENT_SPLIT.split(text)
+    segments = split_segments(text)
     if len(segments) != 1:
         return False
     try:
@@ -1422,7 +1467,7 @@ def analyse_command(command, cwd, depth=0):
         for inner in re.findall(r"\$\(([^()]*)\)|<\(([^()]*)\)|`([^`]*)`", unquoted):
             hits.extend(analyse_command(next(part for part in inner if part), cwd, depth + 1))
         inline_code_reads_state(command, cwd)
-    segments = [seg.strip() for seg in SEGMENT_SPLIT.split(command) if seg.strip()]
+    segments = [seg.strip() for seg in split_segments(command) if seg.strip()]
     for segment in segments:
         # `export KUBECONFIG=...; kubectl ...` must use the exported file for the later segments.
         exported.update(exported_vars(segment, cwd))
