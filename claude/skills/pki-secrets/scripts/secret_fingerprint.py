@@ -29,6 +29,7 @@ import hmac
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 
@@ -50,11 +51,39 @@ class SpecError(Exception):
     pass
 
 
+ESCAPES = {b"n": b"\n", b"t": b"\t", b'"': b'"', b"\\": b"\\"}
+MAX_FILE = 1024 * 1024
+
+
+def closing_quote(text, quote, start):
+    """Index of the quote that ends a value, or -1. In double quotes a backslash escapes the next byte."""
+    i = start
+    while i < len(text):
+        if quote == b'"' and text[i:i + 1] == b"\\":
+            i += 2
+            continue
+        if text[i:i + 1] == quote:
+            return i
+        i += 1
+    return -1
+
+
+def unescape(value):
+    return re.sub(rb"\\(.)", lambda m: ESCAPES.get(m.group(1), b"\\" + m.group(1)), value)
+
+
 def parse_dotenv(raw):
-    """{key: bytes} of a dotenv file, and the number of lines that are not KEY=VALUE (never echoed)."""
+    """{key: bytes} of a dotenv file, and the number of lines that are not KEY=VALUE (never echoed).
+
+    A quoted value may span lines (a PEM key, as python-dotenv and Node dotenv allow): its lines are part of the
+    value and are never read as keys. If the file ends before the quote closes, those lines count as not
+    KEY=VALUE and the key is left out."""
     data, bad = {}, 0
-    for line in raw.splitlines():
-        text = line.strip()
+    lines = raw.splitlines()
+    i = 0
+    while i < len(lines):
+        text = lines[i].strip()
+        i += 1
         if not text or text.startswith(b"#"):
             continue
         if text.startswith(b"export ") or text.startswith(b"export\t"):
@@ -69,9 +98,21 @@ def parse_dotenv(raw):
             bad += 1
             continue
         value = value.strip()
-        if value[:1] in (b"'", b'"'):
-            end = value.find(value[:1], 1)
-            value = value[1:end] if end > 0 else value[1:]
+        quote = value[:1]
+        if quote in (b"'", b'"'):
+            body, first = value[1:], i - 1
+            end = closing_quote(body, quote, 0)
+            while end < 0 and i < len(lines):
+                scanned = len(body) + 1
+                body += b"\n" + lines[i]
+                i += 1
+                end = closing_quote(body, quote, scanned)
+            if end < 0:
+                bad += i - first  # unclosed quote: the key line and every line after it
+                continue
+            value = body[:end]
+            if quote == b'"':
+                value = unescape(value)
         else:
             value = re.split(rb"\s+#", value, maxsplit=1)[0].rstrip()
         data[name] = value
@@ -82,11 +123,18 @@ def read_file(spec):
     path = spec[len("file:"):]
     if not path:
         raise SpecError("bad SPEC 'file:': give a path, e.g. file:.env")
-    if not DOTENV_NAME.fullmatch(os.path.basename(path)):
+    # The name of the file itself, after links: a `.env` link to ~/.aws/credentials is not a dotenv file.
+    if not DOTENV_NAME.fullmatch(os.path.basename(path)) or \
+            not DOTENV_NAME.fullmatch(os.path.basename(os.path.realpath(path))):
         raise SpecError(f"{spec}: only dotenv files (.env, .env.<name>, <name>.env)")
     try:
+        info = os.stat(path)
+        if not stat.S_ISREG(info.st_mode):
+            raise SpecError(f"{spec}: not a regular file")
+        if info.st_size > MAX_FILE:
+            raise SpecError(f"{spec}: larger than {MAX_FILE} bytes, not a dotenv file")
         with open(path, "rb") as handle:
-            raw = handle.read()
+            raw = handle.read(MAX_FILE + 1)
     except OSError as exc:
         raise SpecError(f"{spec}: cannot read ({exc.strerror})")
     return parse_dotenv(raw)

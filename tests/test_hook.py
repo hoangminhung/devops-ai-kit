@@ -1115,5 +1115,38 @@ class DevPatternIsStrict(HookTestCase):
         self.assertEqual(self.decision("terraform apply tfplan", env=env)[0], "allow")
 
 
+class QuoteAwareSplitCorpus(HookTestCase):
+    """RFC 0003: the hook splits commands at `|`, `;`, `&&`, `||` and newlines outside quotes, and falls back to the
+    plain split where its small lexer could misread a quote (comments, `$'…'`, heredocs, backticks, PowerShell).
+    tests/split_corpus.txt holds 68 commands from two reviews with the decision of this hook and of the hook
+    before the change; none is weaker than before except the scenario-17 false positive (a quoted `|` in grep)."""
+
+    SUBS = {"TFSTATE": "terraform.tfstate", "KDEL": "kubectl delete ns shop --context prod", "GRP": "grep",
+            "ALT": "|", "TFAPPLY": "terraform apply -auto-approve"}
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        (cls.workdir / "terraform.tfstate").write_text("{}")
+
+    def test_corpus(self):
+        text = (Path(__file__).parent / "split_corpus.txt").read_text()
+        body = "\n".join(line for line in text.splitlines() if not line.startswith("# ")) + "\n"
+        entries = [e.strip("\n") for e in body.split("\n====\n") if e.strip("\n")]
+        self.assertEqual(len(entries), 68)
+        weaker = 0
+        for entry in entries:
+            head, command = entry.split("\n", 1)
+            tool, expected, _, before = head.split(" ")
+            for key, value in self.SUBS.items():
+                command = command.replace(key, value)
+            with self.subTest(tool=tool, command=command):
+                got = self.decision(command, tool=tool, env={"DEVOPS_KIT_BLOCK_PROD": "1"})[0] or "pass"
+                self.assertEqual(got, expected)
+            rank = {"pass": 0, "ask": 1, "deny": 2}
+            weaker += rank[expected] < rank[before.rstrip(")")]
+        self.assertEqual(weaker, 1)  # only the false positive
+
+
 if __name__ == "__main__":
     unittest.main()

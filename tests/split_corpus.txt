@@ -1,0 +1,246 @@
+# Commands and the hook decision for each (RFC 0003). Placeholders: TFSTATE, KDEL, GRP, ALT (|), TFAPPLY.
+# `(main: …)` is the decision of the hook before the quote-aware split; no entry is weaker than it except
+# the scenario-17 false positive. Format: `<tool> <decision> (main: <decision>)`, the command, `====`.
+Bash deny (main: deny)
+echo $'\'' ; KDEL ; echo \'
+====
+Bash deny (main: deny)
+echo $'\'' ; cat TFSTATE ; echo \'
+====
+Bash ask (main: ask)
+echo $'\'' ; TFAPPLY ; echo \'
+====
+Bash deny (main: deny)
+# it's fine
+KDEL
+# that's it
+====
+Bash deny (main: deny)
+# it's fine
+cat TFSTATE
+# that's it
+====
+Bash ask (main: ask)
+echo hi # it's
+TFAPPLY # that's it
+====
+Bash deny (main: deny)
+KDEL # don't
+====
+Bash deny (main: deny)
+echo "$(kubectl get pods; KDEL)"
+====
+Bash deny (main: deny)
+echo "$(true; cat TFSTATE)"
+====
+Bash deny (main: deny)
+echo "`true; cat TFSTATE`"
+====
+Bash pass (main: pass)
+kubectl get pods & KDEL
+====
+Bash deny (main: deny)
+true & cat TFSTATE
+====
+Bash pass (main: pass)
+kubectl \
+  --context prod delete ns shop
+====
+Bash deny (main: pass)
+cat \
+  TFSTATE
+====
+Bash deny (main: deny)
+echo 'a' \
+; cat TFSTATE
+====
+Bash deny (main: deny)
+cat > f.txt <<'EOF2'
+don't
+EOF2
+KDEL
+====
+Bash deny (main: deny)
+cat > f.txt <<EOF2
+it's
+EOF2
+KDEL
+echo 'x
+====
+Bash deny (main: deny)
+cat > f.txt <<EOF2
+it's
+EOF2
+cat TFSTATE
+echo 'x
+====
+Bash deny (main: deny)
+echo "it's" ; KDEL
+====
+Bash deny (main: deny)
+echo 'say "hi' ; KDEL ; echo '"'
+====
+Bash deny (main: deny)
+echo "a\"b" ; KDEL
+====
+Bash deny (main: deny)
+echo 'a\'; KDEL ; echo 'b'
+====
+Bash deny (main: deny)
+echo "x" |& cat TFSTATE
+====
+Bash deny (main: deny)
+GRP -E 'aALTb' . ; cat TFSTATE
+====
+Bash deny (main: deny)
+GRP -E 'aALTb' TFSTATE
+====
+Bash deny (main: deny)
+x='a'"'"'b' ; KDEL
+====
+Bash deny (main: deny)
+echo ${X:-'}'} ; KDEL
+====
+Bash deny (main: deny)
+echo $"it" ; KDEL
+====
+Bash deny (main: deny)
+f=TFSTATE; cat "$f"
+====
+Bash deny (main: deny)
+GRP -rn 'xALTy' . ALT xargs cat
+====
+Bash deny (main: deny)
+GRP -rnE 'DBALTPG' .
+====
+Bash deny (main: deny)
+GRP -rnE 'DBALTPG' --exclude='*.tfstate*' . ; GRP -r x .
+====
+Bash deny (main: deny)
+echo hi # dir C:\
+KDEL
+====
+Bash ask (main: ask)
+echo hi # dir C:\
+TFAPPLY
+====
+Bash deny (main: deny)
+# Let's check the pods first
+kubectl get pods -n shop
+# Now we'll clean up
+KDEL
+====
+Bash ask (main: ask)
+# Check what's there
+ls
+# Apply (it's reviewed)
+TFAPPLY
+====
+Bash ask (main: ask)
+kubectl get pods # what's running
+TFAPPLY # that's the fix
+====
+Bash deny (main: deny)
+echo "don't" # it's ok
+KDEL
+# that's it
+====
+Bash deny (main: deny)
+python3 - <<'PY'
+print("it's")
+PY
+KDEL
+====
+Bash deny (main: deny)
+cat <<EOF2 | kubectl apply -f -
+note: it's
+EOF2
+KDEL
+# that's it
+====
+Bash deny (main: deny)
+ls # it's
+cat TFSTATE # that's
+====
+Bash deny (main: deny)
+ls # it's
+head -c 100 TFSTATE # that's
+====
+Bash deny (main: deny)
+ls # it's
+GRP -r password . # that's
+====
+Bash deny (main: deny)
+echo $'a\'b' ; KDEL ; echo \'
+====
+Bash deny (main: deny)
+printf $'it\'s\n'; KDEL; echo "'"
+====
+PowerShell deny (main: deny)
+echo `' ; KDEL ; echo `'
+====
+PowerShell deny (main: deny)
+echo `' ; cat TFSTATE ; echo `'
+====
+Bash ask (main: ask)
+bash -c 'echo hi; terraform apply -auto-approve'
+====
+Bash deny (main: pass)
+sh -c "kubectl --context prod delete ns shop | cat"
+====
+Bash deny (main: deny)
+bash -c 'cd /x && kubectl delete ns shop'
+====
+Bash deny (main: deny)
+timeout 5 sh -c 'true; cat TFSTATE'
+====
+Bash deny (main: ask)
+watch -n1 'kubectl get pods; kubectl delete pod x --context prod'
+====
+Bash pass (main: pass)
+ssh host 'terraform apply -auto-approve; ls'
+====
+Bash deny (main: pass)
+xargs sh -c 'cat TFSTATE | head'
+====
+Bash deny (main: deny)
+env FOO=1 bash -c "ls || terraform destroy -auto-approve"
+====
+Bash deny (main: deny)
+python3 -c "import os; os.system('cat TFSTATE')"
+====
+Bash deny (main: pass)
+bash -c "kubectl get secret db -o jsonpath='{.data}' | base64 -d"
+====
+Bash ask (main: ask)
+eval 'ls; terraform apply -auto-approve'
+====
+Bash deny (main: deny)
+sudo sh -c 'echo x; helm uninstall web --kube-context prod'
+====
+Bash deny (main: pass)
+find . -name x -exec sh -c 'cat TFSTATE; true' \;
+====
+Bash pass (main: pass)
+git commit -m 'fix: run terraform apply; done'
+====
+Bash pass (main: deny)
+GRP -rnE 'DBALTPG' --exclude='*.tfstate*' .
+====
+Bash deny (main: deny)
+echo "a;b" && cat TFSTATE
+====
+Bash deny (main: deny)
+kubectl --context prod exec web -- sh -c 'cat /etc/x; rm -rf /data'
+====
+Bash deny (main: pass)
+bash -c 'echo "x" ; terraform state pull'
+====
+Bash ask (main: ask)
+sh -c 'ls' ; terraform apply -auto-approve
+====
+Bash deny (main: deny)
+nohup sh -c 'sleep 1; kubectl --context prod delete deploy web' &
+====
+Bash deny (main: deny)
+GRP -rnE 'DBALTPG' --exclude='*.TFSTATE*' .

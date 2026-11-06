@@ -1342,14 +1342,26 @@ def heredoc_start(line):
     return pos, delim, raw != delim, strip_tabs
 
 
+POWERSHELL = False  # set in main(): PowerShell escapes with a backtick, which split_segments does not read
+UNSURE_QUOTING = ("$'", "<<", "`", "#")  # ANSI-C quotes, heredocs, backticks, comments: see split_segments
+
+
 def split_segments(text):
     """Split at `&&`, `||`, `;`, `|` and newlines outside quotes: `grep -E 'DB|PG' --exclude=x .` is one
-    command, not `grep -E 'DB` and `PG' --exclude=x .`. With unbalanced quotes the plain split is used
-    (it cuts more, so it checks more)."""
+    command, not `grep -E 'DB` and `PG' --exclude=x .`.
+
+    This small lexer reads only plain '…' and "…" quotes and backslashes. Where it could read a quote that
+    bash does not (an apostrophe in a `# it's` comment, `$'\\''`, a heredoc body, a backtick, PowerShell's
+    backtick escape), or a quote spans a line, or quotes are unbalanced, the plain split is used: it cuts
+    more, so it checks more (RFC 0003 §2.2)."""
+    if POWERSHELL or any(mark in text for mark in UNSURE_QUOTING):
+        return SEGMENT_SPLIT.split(text)
     parts, current, i, quote = [], [], 0, ""
     while i < len(text):
         ch = text[i]
         if quote:
+            if ch == "\n":
+                return SEGMENT_SPLIT.split(text)  # a quote over several lines: unusual, do not guess
             if ch == "\\" and quote == '"' and i + 1 < len(text):
                 current.append(text[i:i + 2])
                 i += 2
@@ -1538,6 +1550,8 @@ def main():
     if payload.get("tool_name") == "PowerShell":
         # PowerShell escapes with backtick, not backslash: keep Windows paths intact for shlex.
         command = command.replace("\\", "/")
+        global POWERSHELL
+        POWERSHELL = True
     cwd = payload.get("cwd") or os.getcwd()
     original = command
     command = strip_heredocs(command)

@@ -179,6 +179,44 @@ class SecretFingerprint(unittest.TestCase):
         self.assertIn("DATABASE_URL:", result.stdout)
         self.assertNotIn("LS0t", result.stdout)
 
+    def test_multiline_quoted_value_is_never_read_as_keys(self):
+        # The last base64 line of a PEM is often `[A-Za-z0-9]+=`, which looks like KEY=VALUE (round-2 review).
+        path = self.dotenv('A=1\nAPP_KEY="-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAAS3cret\n'
+                           'S3cretTAILabcXYZ0123456789q=\n-----END PRIVATE KEY-----"\nB=2\n')
+        result = self.run_script(f"file:{path}")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("3 key(s)", result.stdout)
+        self.assertNotIn("not KEY=VALUE", result.stdout)
+        self.assertNotIn("TAIL", result.stdout)
+        self.assertIn("APP_KEY: 119 bytes, PEM", result.stdout)  # 4 lines and 3 newlines
+
+    def test_unclosed_quote_hides_the_rest(self):
+        path = self.dotenv('A=1\nPW="S3cret\nS3cretTAIL=x\n')
+        result = self.run_script(f"file:{path}")
+        self.assertIn("1 key(s), 2 line(s) not KEY=VALUE (not shown)", result.stdout)
+        self.assertNotIn("TAIL", result.stdout)
+
+    def test_escaped_quotes_in_double_quotes(self):
+        path = self.dotenv('PW="a\\"b"\nX=y\n')
+        result = self.run_script(f"file:{path}")
+        self.assertIn("PW: 3 bytes", result.stdout)
+        self.assertIn("2 key(s)", result.stdout)
+
+    def test_links_fifos_and_big_files_are_refused(self):
+        target = self.dotenv("aws_secret_access_key = S3cret\n", "credentials")
+        link = target.parent / ".env"
+        link.symlink_to(target)
+        result = self.run_script(f"file:{link}")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("only dotenv files", result.stderr)
+        fifo = target.parent / "x.env"
+        os.mkfifo(fifo)
+        result = self.run_script(f"file:{fifo}")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("not a regular file", result.stderr)
+        big = self.dotenv("A=" + "x" * (1024 * 1024) + "\n", "big.env")
+        self.assertIn("larger than", self.run_script(f"file:{big}").stderr)
+
     def test_kubectl_errors_do_not_echo_response_bodies(self):
         result = self.run_script("shop/noisy")
         self.assertEqual(result.returncode, 2)
