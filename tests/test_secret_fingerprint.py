@@ -190,6 +190,25 @@ class SecretFingerprint(unittest.TestCase):
         self.assertNotIn("TAIL", result.stdout)
         self.assertIn("APP_KEY: 119 bytes, PEM", result.stdout)  # 4 lines and 3 newlines
 
+    def test_unquoted_multiline_pem_and_base64_lines_are_never_keys(self):
+        # Round-3 review: an unquoted PEM whose base64 line is `[A-Za-z0-9]+=` was printed as a key.
+        path = self.dotenv("TLS_KEY=-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAAS3cret\n"
+                           "Q2hhbmdlTWVQbGVhc2Ux=\n-----END PRIVATE KEY-----\nB=2\nS3cretQ2hhbmdlTWVQ1=x\n")
+        result = self.run_script(f"file:{path}")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("2 key(s), 1 line(s) not KEY=VALUE (not shown)", result.stdout)
+        self.assertIn("TLS_KEY:", result.stdout)
+        self.assertNotIn("Q2hh", result.stdout)
+        path = self.dotenv("TLS_KEY=-----BEGIN PRIVATE KEY-----\nQ2hhbmdlTWVQbGVhc2Ux=\n")  # no END line
+        result = self.run_script(f"file:{path}")
+        self.assertIn("0 key(s), 2 line(s) not KEY=VALUE (not shown)", result.stdout)
+
+    def test_numbers_are_text_not_json(self):
+        path = self.dotenv('PIN=1234\nCFG={"a": 1}\n')
+        result = self.run_script(f"file:{path}")
+        self.assertIn("PIN: 4 bytes, text", result.stdout)
+        self.assertIn("CFG: 8 bytes, JSON", result.stdout)
+
     def test_unclosed_quote_hides_the_rest(self):
         path = self.dotenv('A=1\nPW="S3cret\nS3cretTAIL=x\n')
         result = self.run_script(f"file:{path}")

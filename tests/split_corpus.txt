@@ -1,6 +1,7 @@
-# Commands and the hook decision for each (RFC 0003). Placeholders: TFSTATE, KDEL, GRP, ALT (|), TFAPPLY.
-# `(main: …)` is the decision of the hook before the quote-aware split; no entry is weaker than it except
-# the scenario-17 false positive. Format: `<tool> <decision> (main: <decision>)`, the command, `====`.
+%% Commands and the hook decision for each (RFC 0003). Placeholders: TFSTATE, KDEL, GRP, ALT (|), TFAPPLY.
+%% `(main: …)` is the decision of the hook before the quote-aware split, stored when this file was made;
+%% no entry is weaker than it except the scenario-17 false positive.
+%% Format: `<tool> <decision> (main: <decision>)`, then the command, then `====`. Header lines start with %%.
 Bash deny (main: deny)
 echo $'\'' ; KDEL ; echo \'
 ====
@@ -181,6 +182,93 @@ echo `' ; KDEL ; echo `'
 ====
 PowerShell deny (main: deny)
 echo `' ; cat TFSTATE ; echo `'
+====
+Bash deny (main: deny)
+echo "$(echo "'")" ; KDEL ; echo "$(echo "'")"
+====
+Bash deny (main: deny)
+echo "${x:-"'"}" ; KDEL ; echo "${x:-"'"}"
+====
+Bash deny (main: deny)
+echo "${x:-'"'}" ; KDEL ; echo "${x:-'"'}"
+====
+Bash deny (main: deny)
+a="$(echo "don't")"; KDEL; b="$(echo "won't")"
+====
+Bash deny (main: deny)
+a="$(echo "don't")"; cat TFSTATE; b="$(echo "won't")"
+====
+Bash ask (main: ask)
+a="$(echo "don't")" && TFAPPLY && b="$(echo "won't")"
+====
+Bash deny (main: deny)
+echo "${x:-"'"}" ; cat TFSTATE ; echo "${x:-"'"}"
+====
+Bash deny (main: deny)
+x="$(printf "'")"; KDEL; y="$(printf "'")"
+====
+Bash deny (main: deny)
+echo "$(echo '"')" ; KDEL ; echo "$(echo '"')"
+====
+Bash deny (main: deny)
+diff <(echo "'") x ; KDEL ; diff <(echo "'") x
+====
+Bash deny (main: deny)
+echo "$((1))'" ; KDEL ; echo "'"
+====
+Bash deny (main: deny)
+echo $"'" ; KDEL ; echo $"'"
+====
+Bash deny (main: deny)
+echo \' ; KDEL ; echo \'
+====
+Bash deny (main: deny)
+{ echo "a;b"; KDEL; }
+====
+Bash deny (main: deny)
+f() { echo 'x|y'; KDEL; }; f
+====
+Bash deny (main: deny)
+( echo 'a|b' ; cat TFSTATE )
+====
+Bash deny (main: deny)
+echo 'a' |& KDEL
+====
+Bash deny (main: deny)
+echo 'x';; KDEL
+====
+Bash deny (main: deny)
+echo 'a'	;	KDEL
+====
+Bash deny (main: deny)
+echo 'a'
+KDEL
+====
+Bash deny (main: deny)
+echo “a;b” ; KDEL
+====
+Bash deny (main: deny)
+sh -c "echo \"'\" ; KDEL ; echo \"'\""
+====
+Bash deny (main: deny)
+bash -c 'echo "$(echo "'"'"'")" ; KDEL ; echo "$(echo "'"'"'")"'
+====
+Bash deny (main: deny)
+echo "${x//'/}" ; KDEL ; echo "${x//'/}"
+echo hi
+KDEL
+====
+Bash deny (main: deny)
+echo "${x//'/}" ; KDEL ; echo "${x//'/}"
+====
+Bash deny (main: deny)
+echo "$(echo x ; KDEL ; echo y)"
+====
+Bash deny (main: deny)
+echo "$(echo  ; KDEL ; echo a))\'\$"
+====
+Bash deny (main: deny)
+echo "$(echo echo 	a] ; KDEL ; echo )"
 ====
 Bash ask (main: ask)
 bash -c 'echo hi; terraform apply -auto-approve'

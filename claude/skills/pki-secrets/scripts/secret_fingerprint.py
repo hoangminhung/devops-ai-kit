@@ -53,6 +53,9 @@ class SpecError(Exception):
 
 ESCAPES = {b"n": b"\n", b"t": b"\t", b'"': b'"', b"\\": b"\\"}
 MAX_FILE = 1024 * 1024
+# A "key" of 16+ letters and digits with no `_` is more likely a line of base64 (a key or a certificate) than a
+# variable name: it is counted as not KEY=VALUE, never shown.
+LOOKS_ENCODED = re.compile(r"(?=.*[0-9])[A-Za-z0-9]{16,}")
 
 
 def closing_quote(text, quote, start):
@@ -94,7 +97,7 @@ def parse_dotenv(raw):
             name = key.decode("ascii")
         except UnicodeDecodeError:
             name = ""
-        if not sep or not DOTENV_KEY.fullmatch(name):
+        if not sep or not DOTENV_KEY.fullmatch(name) or LOOKS_ENCODED.fullmatch(name):
             bad += 1
             continue
         value = value.strip()
@@ -113,6 +116,17 @@ def parse_dotenv(raw):
             value = body[:end]
             if quote == b'"':
                 value = unescape(value)
+        elif value.startswith(b"-----BEGIN") and b"-----END" not in value:
+            # An unquoted PEM over several lines: its lines are the value, never keys.
+            body, first = value, i - 1
+            while i < len(lines) and b"-----END" not in lines[i]:
+                body += b"\n" + lines[i].strip()
+                i += 1
+            if i == len(lines):
+                bad += i - first
+                continue
+            value = body + b"\n" + lines[i].strip()
+            i += 1
         else:
             value = re.split(rb"\s+#", value, maxsplit=1)[0].rstrip()
         data[name] = value
@@ -184,8 +198,8 @@ def kind(value):
     except UnicodeDecodeError:
         return "binary"
     try:
-        json.loads(text)
-        return "JSON"
+        if isinstance(json.loads(text), (dict, list)):
+            return "JSON"  # a number or a string is "text": "4 bytes, JSON" would say "a 4-digit number"
     except ValueError:
         pass
     note = " (ends with newline)" if text.endswith("\n") else ""

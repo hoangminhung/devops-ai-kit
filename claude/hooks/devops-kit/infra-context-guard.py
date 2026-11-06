@@ -1343,7 +1343,9 @@ def heredoc_start(line):
 
 
 POWERSHELL = False  # set in main(): PowerShell escapes with a backtick, which split_segments does not read
-UNSURE_QUOTING = ("$'", "<<", "`", "#")  # ANSI-C quotes, heredocs, backticks, comments: see split_segments
+# Where bash quotes differently from split_segments' small lexer: any `$` (`$'…'`, and `"$(…)"` / `"${…}"`, which
+# start new quoting inside double quotes), backticks, `#` comments, `<` (heredocs, `<(…)`) and `>(…)`.
+UNSURE_QUOTING = ("$", "`", "#", "<", ">(")
 
 
 def split_segments(text):
@@ -1351,9 +1353,10 @@ def split_segments(text):
     command, not `grep -E 'DB` and `PG' --exclude=x .`.
 
     This small lexer reads only plain '…' and "…" quotes and backslashes. Where it could read a quote that
-    bash does not (an apostrophe in a `# it's` comment, `$'\\''`, a heredoc body, a backtick, PowerShell's
-    backtick escape), or a quote spans a line, or quotes are unbalanced, the plain split is used: it cuts
-    more, so it checks more (RFC 0003 §2.2)."""
+    bash does not (an apostrophe in a `# it's` comment, `$'\\''`, a quote inside `"$(…)"`, a heredoc body, a
+    backtick, PowerShell's backtick escape), or a quote spans a line, or quotes are unbalanced, the plain
+    split is used: it cuts more, so it checks more. So only simple commands (no `$`, backtick, `#`, `<`, `>(`)
+    get the quote-aware split (RFC 0003 §2.2)."""
     if POWERSHELL or any(mark in text for mark in UNSURE_QUOTING):
         return SEGMENT_SPLIT.split(text)
     parts, current, i, quote = [], [], 0, ""

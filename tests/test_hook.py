@@ -1118,7 +1118,7 @@ class DevPatternIsStrict(HookTestCase):
 class QuoteAwareSplitCorpus(HookTestCase):
     """RFC 0003: the hook splits commands at `|`, `;`, `&&`, `||` and newlines outside quotes, and falls back to the
     plain split where its small lexer could misread a quote (comments, `$'…'`, heredocs, backticks, PowerShell).
-    tests/split_corpus.txt holds 68 commands from two reviews with the decision of this hook and of the hook
+    tests/split_corpus.txt holds 96 commands from three reviews with the decision of this hook and of the hook
     before the change; none is weaker than before except the scenario-17 false positive (a quoted `|` in grep)."""
 
     SUBS = {"TFSTATE": "terraform.tfstate", "KDEL": "kubectl delete ns shop --context prod", "GRP": "grep",
@@ -1131,9 +1131,10 @@ class QuoteAwareSplitCorpus(HookTestCase):
 
     def test_corpus(self):
         text = (Path(__file__).parent / "split_corpus.txt").read_text()
-        body = "\n".join(line for line in text.splitlines() if not line.startswith("# ")) + "\n"
+        body = "\n".join(line for line in text.splitlines() if not line.startswith("%% ")) + "\n"  # header only
         entries = [e.strip("\n") for e in body.split("\n====\n") if e.strip("\n")]
-        self.assertEqual(len(entries), 68)
+        self.assertEqual(len(entries), 96)
+        self.assertTrue(any(e.split("\n", 1)[1].startswith("# it's") for e in entries))  # comments are kept
         weaker = 0
         for entry in entries:
             head, command = entry.split("\n", 1)
