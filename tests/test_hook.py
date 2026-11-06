@@ -916,6 +916,17 @@ class KubeconfigName(HookTestCase):
         reason = self.reason("kubectl delete pod web-1")
         self.assertNotIn("kubeconfig=", reason)
 
+    def test_quoted_separator_in_export_keeps_the_stricter_target(self):
+        # RFC 0003 round 6: the quote-aware pass must not let a whole-segment `export KUBECONFIG=<dev>` turn the
+        # plain pass's production target (session KUBECONFIG) into dev. Before RFC 0003 this was denied.
+        for quoted in ('"x;y"', '"x|y"', '"x&&y"'):
+            with self.subTest(quoted=quoted):
+                decision, reason = self.decision(
+                    f"export A={quoted} KUBECONFIG=./kubeconfig.dev-sandbox; kubectl scale deploy web --replicas=0",
+                    env={"FAKE_KUBE_CTX": "default", "KUBECONFIG": "/k/kubeconfig.hetzner-live",
+                         "DEVOPS_KIT_BLOCK_PROD": "1"})
+                self.assertEqual(decision, "deny", reason)
+
     def test_blocked_on_production_kubeconfig(self):
         decision, _ = self.decision("export KUBECONFIG=./kubeconfig.hetzner-live && kubectl delete ns tmp",
                                     env={"FAKE_KUBE_CTX": "default", "DEVOPS_KIT_BLOCK_PROD": "1"})
@@ -1112,12 +1123,14 @@ class DevPatternIsStrict(HookTestCase):
 
 
 class QuoteAwareSplitCorpus(HookTestCase):
-    """RFC 0003: every segment is checked whole (split outside quotes) and in the pieces of the plain split, so the
-    hook is never weaker than with the plain split alone. tests/split_corpus.txt holds 181 commands from five
-    reviews with the decision of this hook and of the hook before the change: none is weaker, 7 are stronger."""
+    """RFC 0003: pass 1 checks the plain split exactly as before; pass 2 adds the segments split outside quotes, with
+    their own export/cd state, and only adds hits. tests/split_corpus.txt holds 219 commands from six reviews with
+    the decision of this hook and of the hook at origin/main: none is weaker, 9 are stronger."""
 
     SUBS = {"TFSTATE": "terraform.tfstate", "KDEL": "kubectl delete ns shop --context prod", "GRP": "grep",
-            "ALT": "|", "EXC": "--exclude='*.tfstate*'", "TFAPPLY": "terraform apply -auto-approve"}
+            "ALT": "|", "EXC": "--exclude='*.tfstate*'", "KNOCTX": "kubectl delete ns shop",
+            "TFGLOB": "*.tfstate", "KQUOTED": "'kubectl' delete ns shop --context prod",
+            "TFAPPLY": "terraform apply -auto-approve"}
 
     @classmethod
     def setUpClass(cls):
@@ -1128,7 +1141,7 @@ class QuoteAwareSplitCorpus(HookTestCase):
         text = (Path(__file__).parent / "split_corpus.txt").read_text()
         body = "\n".join(line for line in text.splitlines() if not line.startswith("%% ")) + "\n"  # header only
         entries = [e.strip("\n") for e in body.split("\n====\n") if e.strip("\n")]
-        self.assertEqual(len(entries), 181)
+        self.assertEqual(len(entries), 219)
         self.assertTrue(any(e.split("\n", 1)[1].startswith("# it's") for e in entries))  # comments are kept
         weaker, rank = [], {"pass": 0, "ask": 1, "deny": 2}
         for entry in entries:

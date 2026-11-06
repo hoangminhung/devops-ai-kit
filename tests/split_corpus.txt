@@ -1,5 +1,6 @@
-%% Commands and the hook decision for each (RFC 0003). Placeholders: TFSTATE, KDEL, GRP, ALT (|), TFAPPLY.
-%% `(main: …)` is the decision of the hook before the quote-aware split, stored when this file was made;
+%% Commands and the hook decision for each (RFC 0003). Placeholders: see SUBS in tests/test_hook.py.
+%% `(main: …)` is the decision of the hook at origin/main (`git show origin/main:<hook>`), computed by a dev script
+%% when this file was made, in the same environment as the test;
 %% no entry is weaker than it (the hook checks the plain pieces as before, plus whole segments).
 %% Format: `<tool> <decision> (main: <decision>)`, then the command, then `====`. Header lines start with %%.
 Bash deny (main: deny)
@@ -530,6 +531,128 @@ GRP `' x ; KDEL ; echo `'
 ====
 PowerShell deny (main: deny)
 GRP `' x ; cat TFSTATE ; echo `'
+====
+Bash deny (main: deny)
+KNOCTX
+====
+Bash deny (main: deny)
+export A="x;y" KUBECONFIG=dev.yaml; KNOCTX
+====
+Bash deny (main: deny)
+export KUBECONFIG=dev.yaml; KNOCTX
+====
+Bash deny (main: pass)
+cat TFSTATE\&&&echo hi
+====
+Bash deny (main: pass)
+echo hi\&&&KDEL
+====
+Bash deny (main: deny)
+echo a|||KDEL
+====
+Bash deny (main: deny)
+echo a;;KDEL
+====
+Bash pass (main: pass)
+echo a&&&KDEL
+====
+Bash deny (main: deny)
+echo "a
+b" ; KDEL
+====
+Bash pass (main: pass)
+git commit -m "fix: x; y"
+====
+Bash pass (main: pass)
+echo "a | b"
+====
+Bash pass (main: pass)
+kubectl get pods -o jsonpath='{..metadata.name}' | GRP x
+====
+Bash deny (main: deny)
+find . -type f -exec GRP -l password {} \;
+====
+Bash pass (main: pass)
+find . -name '*.yaml' -exec cat {} \;
+====
+Bash deny (main: deny)
+find . -name 'TFGLOB' -exec cat {} \;
+====
+Bash pass (main: pass)
+sh -c "kubectl get pods | cat"
+====
+Bash deny (main: deny)
+sh -c "true; KDEL"
+====
+Bash pass (main: pass)
+watch "kubectl get pods | GRP x"
+====
+Bash deny (main: deny)
+xargs -I{} sh -c 'echo {}; KDEL'
+====
+Bash pass (main: pass)
+GRP -E 'DB|PG' .env
+====
+Bash deny (main: deny)
+GRP -rn "password\|secret" .
+====
+Bash deny (main: deny)
+cat TFSTATE | GRP x
+====
+Bash pass (main: pass)
+echo 'cat TFSTATE'
+====
+Bash pass (main: pass)
+git commit -m "docs: never cat TFSTATE; use outputs"
+====
+Bash pass (main: pass)
+git commit -m "docs: never KDEL; ask"
+====
+Bash pass (main: pass)
+echo "never KDEL; ask"
+====
+Bash pass (main: pass)
+kubectl get pods \
+  --context prod-admin | GRP x
+====
+Bash pass (main: pass)
+helm template x . | kubectl apply --dry-run=client -f -
+====
+Bash deny (main: deny)
+timeout 5 "sh" -c "true; KDEL"
+====
+Bash deny (main: deny)
+env 'sh' -c 'KDEL'
+====
+Bash pass (main: pass)
+"KDEL"
+====
+Bash deny (main: deny)
+KQUOTED
+====
+Bash pass (main: pass)
+echo "x; cd sub; cd sub; y"; ls
+====
+Bash pass (main: pass)
+cd "a;b" && ls
+====
+Bash pass (main: pass)
+ssh h "true; cd envs; cd envs; true"; ls
+====
+Bash deny (main: deny)
+tee "a;b" <<'EOF'
+KDEL
+EOF
+====
+Bash deny (main: deny)
+cat > "notes|x.md" <<'EOF'
+cat TFSTATE
+EOF
+====
+Bash pass (main: pass)
+cat > notes.md <<'EOF'
+KDEL
+EOF
 ====
 Bash ask (main: ask)
 bash -c 'echo hi; terraform apply -auto-approve'

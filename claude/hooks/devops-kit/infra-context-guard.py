@@ -1404,7 +1404,7 @@ def split_segments(text):
 
 def data_feeder(text):
     """True when the command before `<<` only stores or applies data: cat/tee to a file, kubectl apply -f -."""
-    segments = split_segments(text)
+    segments = SEGMENT_SPLIT.split(text)  # heredoc_start already refuses a line with a separator
     if len(segments) != 1:
         return False
     try:
@@ -1475,26 +1475,34 @@ def single_simple_command(command):
 
 
 def analyse_command(command, cwd, depth=0):
-    hits, exported = [], {}
+    hits = []
     if depth < 3:
         # `echo $(cat terraform.tfstate)`, `diff <(terraform output -json) x`: check the inner commands too
         unquoted = re.sub(r"'[^']*'", "''", command)  # `git commit -m 'do not run $(x)'` runs nothing
         for inner in re.findall(r"\$\(([^()]*)\)|<\(([^()]*)\)|`([^`]*)`", unquoted):
             hits.extend(analyse_command(next(part for part in inner if part), cwd, depth + 1))
         inline_code_reads_state(command, cwd)
-    # Each segment is checked whole (split outside quotes: `sh -c "kubectl … | cat"` reaches the nested-shell check
-    # in one piece) AND in the pieces of the plain split, which also cuts inside quotes. The plain pieces are what
-    # this hook checked before RFC 0003, so it can only get stricter: quoted text may be code another program
-    # runs (`ssh host 'cd x; terraform apply …'`, `ksh -c '…; …'`), and a grep exemption read `.env` values
-    # (RFC 0003 §2.2, rounds 4–5).
-    segments = []
-    for seg in split_segments(command):
-        pieces = [seg] + SEGMENT_SPLIT.split(seg)
-        segments += [p.strip() for p in dict.fromkeys(pieces) if p.strip()]
+    # Pass 1 is the plain split (also cuts inside quotes), exactly as before RFC 0003: quoted text may be code
+    # another program runs (`ssh host 'cd x; terraform apply …'`, `ksh -c '…; …'`), and its pieces get checked.
+    plain = [seg.strip() for seg in SEGMENT_SPLIT.split(command) if seg.strip()]
+    hits.extend(analyse_segments(plain, cwd, depth))
+    # Pass 2 adds the segments split outside quotes only, with their own export/cd state: `sh -c "kubectl … | cat"`
+    # reaches the nested-shell check in one piece. It only adds hits (and Blocked), so the result is never weaker
+    # than pass 1 alone (RFC 0003 §2.2).
+    whole = [seg.strip() for seg in split_segments(command) if seg.strip()]
+    if whole != plain:
+        hits.extend(analyse_segments(whole, cwd, depth, skip=set(plain)))
+    return hits
+
+
+def analyse_segments(segments, cwd, depth, skip=frozenset()):
+    """Check each segment in order; `export` and `cd` carry over to later ones. `skip`: already checked."""
+    hits, exported = [], {}
     for segment in segments:
         # `export KUBECONFIG=...; kubectl ...` must use the exported file for the later segments.
         exported.update(exported_vars(segment, cwd))
-        hits.extend(analyse_segment(segment, cwd, depth, exported))
+        if segment not in skip:
+            hits.extend(analyse_segment(segment, cwd, depth, exported))
         tokens, _ = peel(tokenize(segment))
         if tokens[:1] == ["cd"] and len(tokens) == 2:
             cwd = os.path.join(cwd, os.path.expanduser(tokens[1]))  # `cd envs/prod && cat *`
