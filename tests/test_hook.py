@@ -1116,13 +1116,13 @@ class DevPatternIsStrict(HookTestCase):
 
 
 class QuoteAwareSplitCorpus(HookTestCase):
-    """RFC 0003: the hook splits commands at `|`, `;`, `&&`, `||` and newlines outside quotes, and falls back to the
-    plain split where its small lexer could misread a quote (comments, `$'…'`, heredocs, backticks, PowerShell).
-    tests/split_corpus.txt holds 96 commands from three reviews with the decision of this hook and of the hook
-    before the change; none is weaker than before except the scenario-17 false positive (a quoted `|` in grep)."""
+    """RFC 0003: a grep-like segment is taken as the quote-aware split gives it (`grep -E 'DB|PG' …` is one command);
+    every other segment is checked whole and in the pieces of the plain split, so the hook is never weaker than
+    with the plain split. tests/split_corpus.txt holds 181 commands from four reviews with the decision of this
+    hook and of the hook before the change; only lone greps (the false positive of a quoted `|`) are weaker."""
 
     SUBS = {"TFSTATE": "terraform.tfstate", "KDEL": "kubectl delete ns shop --context prod", "GRP": "grep",
-            "ALT": "|", "TFAPPLY": "terraform apply -auto-approve"}
+            "ALT": "|", "EXC": "--exclude='*.tfstate*'", "TFAPPLY": "terraform apply -auto-approve"}
 
     @classmethod
     def setUpClass(cls):
@@ -1133,20 +1133,24 @@ class QuoteAwareSplitCorpus(HookTestCase):
         text = (Path(__file__).parent / "split_corpus.txt").read_text()
         body = "\n".join(line for line in text.splitlines() if not line.startswith("%% ")) + "\n"  # header only
         entries = [e.strip("\n") for e in body.split("\n====\n") if e.strip("\n")]
-        self.assertEqual(len(entries), 96)
+        self.assertEqual(len(entries), 181)
         self.assertTrue(any(e.split("\n", 1)[1].startswith("# it's") for e in entries))  # comments are kept
-        weaker = 0
+        weaker, rank = [], {"pass": 0, "ask": 1, "deny": 2}
         for entry in entries:
-            head, command = entry.split("\n", 1)
+            head, placeholder = entry.split("\n", 1)
             tool, expected, _, before = head.split(" ")
+            command = placeholder
             for key, value in self.SUBS.items():
                 command = command.replace(key, value)
             with self.subTest(tool=tool, command=command):
                 got = self.decision(command, tool=tool, env={"DEVOPS_KIT_BLOCK_PROD": "1"})[0] or "pass"
                 self.assertEqual(got, expected)
-            rank = {"pass": 0, "ask": 1, "deny": 2}
-            weaker += rank[expected] < rank[before.rstrip(")")]
-        self.assertEqual(weaker, 1)  # only the false positive
+            if rank[expected] < rank[before.rstrip(")")]:
+                weaker.append(placeholder)
+        self.assertEqual(len(weaker), 9)
+        for placeholder in weaker:  # only a lone grep: no other command, no chain, no second line
+            self.assertTrue(placeholder.startswith("GRP "), placeholder)
+            self.assertFalse(any(x in placeholder for x in ("KDEL", "TFAPPLY", "cat ", ";", "&&", "\n")), placeholder)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 %% Commands and the hook decision for each (RFC 0003). Placeholders: TFSTATE, KDEL, GRP, ALT (|), TFAPPLY.
 %% `(main: …)` is the decision of the hook before the quote-aware split, stored when this file was made;
-%% no entry is weaker than it except the scenario-17 false positive.
+%% an entry is weaker than it only for a lone grep (the false positive of a `|` inside quotes).
 %% Format: `<tool> <decision> (main: <decision>)`, then the command, then `====`. Header lines start with %%.
 Bash deny (main: deny)
 echo $'\'' ; KDEL ; echo \'
@@ -269,6 +269,267 @@ echo "$(echo  ; KDEL ; echo a))\'\$"
 ====
 Bash deny (main: deny)
 echo "$(echo echo 	a] ; KDEL ; echo )"
+====
+Bash deny (main: deny)
+ksh -c 'true; KDEL'
+====
+Bash deny (main: deny)
+fish -c 'true; KDEL'
+====
+Bash deny (main: deny)
+busybox sh -c 'true; KDEL'
+====
+Bash deny (main: deny)
+ash -c 'true; KDEL'
+====
+Bash deny (main: deny)
+mksh -c 'true; KDEL'
+====
+Bash deny (main: deny)
+tcsh -c 'true; KDEL'
+====
+Bash deny (main: deny)
+ssh localhost 'true; KDEL'
+====
+Bash ask (main: ask)
+ssh host 'cd /x; TFAPPLY'
+====
+Bash deny (main: deny)
+ansible localhost -m shell -a 'true; KDEL'
+====
+Bash deny (main: deny)
+docker run --rm img sh -c 'true; KDEL'
+====
+Bash deny (main: deny)
+kubectl exec pod -- sh -c 'true; KDEL'
+====
+Bash deny (main: deny)
+chroot / sh -c 'true; KDEL'
+====
+Bash deny (main: deny)
+unshare -r sh -c 'true; KDEL'
+====
+Bash deny (main: deny)
+nsenter -t 1 -m sh -c 'true; KDEL'
+====
+Bash deny (main: deny)
+runuser -u x -- sh -c 'true; KDEL'
+====
+Bash deny (main: deny)
+systemd-run --user sh -c 'true; KDEL'
+====
+Bash deny (main: deny)
+chrt 0 sh -c 'true; KDEL'
+====
+Bash deny (main: deny)
+tmux new -d 'true; KDEL'
+====
+Bash deny (main: deny)
+screen -dm sh -c 'true; KDEL'
+====
+Bash deny (main: deny)
+git rebase -i HEAD~1 --exec 'true; KDEL'
+====
+Bash deny (main: deny)
+git bisect run sh -c 'true; KDEL'
+====
+Bash deny (main: deny)
+npm exec -c 'true; KDEL'
+====
+Bash deny (main: deny)
+uv run sh -c 'true; KDEL'
+====
+Bash pass (main: pass)
+python3 -c 'import os; os.system("KDEL")'
+====
+Bash deny (main: deny)
+expect -c 'spawn sh -c "true; KDEL"'
+====
+Bash deny (main: deny)
+xterm -e 'true; KDEL'
+====
+Bash deny (main: deny)
+pwsh -c 'true; KDEL'
+====
+Bash deny (main: deny)
+dash -c 'true; KDEL'
+====
+Bash deny (main: deny)
+command sh -c 'true; KDEL'
+====
+Bash deny (main: deny)
+time sh -c 'true; KDEL'
+====
+Bash deny (main: deny)
+sudo -s 'true; KDEL'
+====
+Bash deny (main: deny)
+env sh -c 'true; KDEL'
+====
+Bash deny (main: deny)
+nice ksh -c 'true; KDEL'
+====
+Bash deny (main: deny)
+ksh -c 'GRP x TFSTATE; true'
+====
+Bash ask (main: ask)
+ksh -c 'true; TFAPPLY'
+====
+Bash deny (main: deny)
+zsh -c 'true; KDEL'
+====
+Bash deny (main: deny)
+nohup ksh -c 'true ALT KDEL'
+====
+Bash pass (main: pass)
+perl -e 'system("true"); system("KDEL")'
+====
+Bash pass (main: pass)
+awk 'BEGIN{system("true"); system("KDEL")}'
+====
+Bash deny (main: deny)
+echo 'true; KDEL' ALT ksh
+====
+Bash deny (main: deny)
+echo 'true; KDEL' ALT at now
+====
+Bash pass (main: pass)
+true; echo 'KDEL; x' ALT ksh
+====
+Bash deny (main: deny)
+busybox ash -c 'true && KDEL'
+====
+Bash deny (main: deny)
+ksh93 -c 'true || KDEL'
+====
+Bash ask (main: ask)
+sudo ksh -c 'true; TFAPPLY'
+====
+Bash deny (main: deny)
+echo "`true ; KDEL`"
+====
+Bash deny (main: deny)
+echo "`echo "` ; KDEL ; echo "`"
+====
+Bash deny (main: deny)
+echo "`echo '` ; KDEL ; echo '`"
+====
+Bash deny (main: deny)
+echo "`= ; KDEL ; echo {` x"
+====
+Bash deny (main: deny)
+echo "`true ; GRP x TFSTATE`"
+====
+Bash deny (main: deny)
+echo "`printf '"'` ; KDEL ; echo "`printf '"'`"
+====
+Bash pass (main: deny)
+GRP -rnE 'DB ALT PG' EXC .
+====
+Bash deny (main: deny)
+cd "$HOME" && GRP -rnE 'DB ALT PG' EXC .
+====
+Bash pass (main: deny)
+GRP -rnE 'DB ALT PG' EXC . 2>/dev/null ALT head -50
+====
+Bash deny (main: deny)
+GRP -rnE 'DB ALT PG' EXC . ALT GRP -v '#'
+====
+Bash pass (main: deny)
+GRP -rnE '^(DB ALT PG)_[A-Z_]+=' EXC .
+====
+Bash deny (main: deny)
+GRP -rnE '(DB ALT PG)_[A-Z]+$' EXC .
+====
+Bash pass (main: deny)
+GRP -rnE 'process\.env\.(DB ALT PG)' EXC --exclude-dir=node_modules .
+====
+Bash pass (main: deny)
+GRP -rnE 'getenv\("(DB ALT PG)' EXC .
+====
+Bash deny (main: deny)
+GRP -rnE '\$\{?(DB ALT PG)' EXC .
+====
+Bash pass (main: deny)
+GRP -rnE 'DB ALT PG' EXC --include='*.{yml,yaml,env}' .
+====
+Bash pass (main: deny)
+GRP -rn 'DB\ALT PG' EXC .
+====
+Bash pass (main: deny)
+GRP -rnE "DB ALT PG" EXC .
+====
+Bash deny (main: deny)
+GRP -rnE 'DB ALT PG' EXC . ; echo done #x
+====
+Bash deny (main: deny)
+GRP -rnE '<DB ALT PG>' EXC .
+====
+Bash deny (main: deny)
+GRP "$(echo "'")" x ; KDEL ; echo "$(echo "'")"
+====
+Bash deny (main: deny)
+GRP "$(echo "'")" x ; cat TFSTATE ; echo "$(echo "'")"
+====
+Bash deny (main: deny)
+GRP "`echo '`" x ; KDEL ; echo '`"
+====
+Bash deny (main: deny)
+GRP "`printf '"'`" x ; KDEL ; echo "`printf '"'`"
+====
+Bash deny (main: deny)
+GRP x . # it's
+KDEL # that's
+====
+Bash deny (main: deny)
+GRP x . <<EOF2
+it's
+EOF2
+KDEL
+echo 'x
+====
+Bash deny (main: deny)
+GRP $'\'' x ; KDEL ; echo \'
+====
+Bash deny (main: deny)
+GRP x <(echo "'") ; KDEL ; echo "'"
+====
+Bash deny (main: deny)
+GRP x >(cat) ; KDEL
+====
+Bash deny (main: deny)
+GRP 'a
+b' x ; KDEL
+====
+Bash ask (main: ask)
+GRP -E 'DBALTPG' x ; ssh host 'cd /x; TFAPPLY'
+====
+Bash deny (main: deny)
+rg --pre 'sh -c "true; KDEL"' x .
+====
+Bash deny (main: deny)
+rg --pre='sh -c "true; KDEL"' x .
+====
+Bash deny (main: deny)
+rg x --pre 'bash -c "cat TFSTATE; true"' .
+====
+Bash deny (main: deny)
+ack --pager 'sh -c "true; KDEL"' x
+====
+Bash deny (main: deny)
+ag --pager 'sh -c "true; KDEL"' x
+====
+Bash deny (main: deny)
+GRP x . --exclude='*.tfstate*' ; ssh host 'true; KDEL'
+====
+Bash deny (main: deny)
+rg --hostname-bin 'sh -c "true; KDEL"' x
+====
+PowerShell deny (main: deny)
+GRP `' x ; KDEL ; echo `'
+====
+PowerShell deny (main: deny)
+GRP `' x ; cat TFSTATE ; echo `'
 ====
 Bash ask (main: ask)
 bash -c 'echo hi; terraform apply -auto-approve'

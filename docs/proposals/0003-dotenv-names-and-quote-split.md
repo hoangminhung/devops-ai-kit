@@ -1,6 +1,6 @@
 # RFC 0003: a names-only path for `.env`, and a hook split that respects quotes
 
-- Status: round 4 (2026-11-06). Rounds 1, 2 and 3 were BLOCK; the scope is the fix of the measured false positives only, and the split falls back to the old one wherever its lexer could be wrong (§8).
+- Status: round 5 (2026-11-06). Rounds 1–4 were BLOCK; the scope is the fix of the measured false positives only, and the split falls back to the old one wherever its lexer could be wrong (§8).
 - Work item: the open item of [RFC 0002 §10.7](0002-outcome-benchmark.md): scenario 17 done 2 / 6 with the kit, 6 / 6 without.
 
 ## 1. Problem (measured)
@@ -28,20 +28,23 @@ secret_fingerprint.py file:.env file:.env.prod      # compare two files
 
 - Only dotenv file names: `.env`, `.env.<name>`, `<name>.env`. Anything else (kubeconfig, state, keys, YAML, `.envrc`) is refused with exit 2, so the script is not a general way to look into files.
 - A key is `[A-Za-z_][A-Za-z0-9_]*` before the first `=` (after an optional `export`). Any other line (PEM, `key: value`, `a.b=x`, words before `=`) is counted as "not KEY=VALUE" and never shown. Values: quotes stripped, `#` comments after unquoted values stripped, `\"`, `\\`, `\n`, `\t` decoded in double quotes.
-- A quoted value may span lines (a PEM key, as python-dotenv and Node dotenv allow); its lines are part of the value, never keys. An unclosed quote: the key and every later line count as "not KEY=VALUE". An unquoted value that starts `-----BEGIN` without `-----END` on its line runs to the `-----END` line. A "key" of 16+ letters and digits with no `_` (a base64 line) is counted, not shown.
+- A quoted value may span lines (a PEM key, as python-dotenv and Node dotenv allow); its lines are part of the value, never keys. An unclosed quote: the key and every later line count as "not KEY=VALUE". An unquoted value that starts `-----BEGIN` without `-----END` on its line runs to the `-----END` line, and a PEM block on its own lines (after `KEY=`) is counted, never read as keys. A "key" of 16+ letters and digits with no `_` (a base64 line) is counted, not shown.
 - Kind: `JSON` only for an object or array; a number is `text` ("4 bytes, JSON" would say "a 4-digit number").
 - The file itself must have a dotenv name after links are resolved (a `.env` link to `~/.aws/credentials` is refused), be a regular file (no FIFO, no device) and be at most 1 MiB.
 - Errors name the path and the OS error, never content.
 
 `00-core.md` §5, `pki-secrets/SKILL.md` and both guides get one line each.
 
-### 2.2 Hook: split commands outside quotes only
+### 2.2 Hook: a grep is not split inside quotes; nothing else gets weaker
 
-`split_segments()` replaces `SEGMENT_SPLIT.split()` in `analyse_command` and `data_feeder`: it splits at `&&`, `||`, `;`, `|` and newlines outside single and double quotes (backslash escapes honoured).
+`split_segments()` splits at `&&`, `||`, `;`, `|` and newlines outside single and double quotes (backslash escapes honoured). `analyse_command` uses it like this:
 
-Its lexer reads only plain `'…'` and `"…"` quotes. Round 2 showed where that differs from bash and turned deny into pass: an apostrophe in a comment (`# it's`), `$'\''`, a heredoc body, PowerShell's backtick escape. Round 3 found one more: inside `"$(…)"` and `"${…}"` bash starts new quoting, so `a="$(echo "don't")"; <cmd>; …` hid `<cmd>`. So the quote-aware split is used **only for simple commands**: it falls back to the old split (which cuts more, so it checks more) whenever the text contains `$`, a backtick, `#`, `<`, `>(`, a quote that spans a line, unbalanced quotes, or the tool is PowerShell. The scenario-17 grep has none of these. A differential fuzzer that runs real bash (`echo a ; echo HIT ; echo b` with random quoting fragments, round 3) found 0 commands where the split hides a command bash runs, in 5 × 20 000.
+- **A grep-like segment** (`grep`, `egrep`, `fgrep`, `zgrep`, `rg`, `ag`, `ack` after wrappers) is checked as `split_segments` gives it: `grep -rnE 'DB|PG' --exclude='*.tfstate*' .` is one command. Not when it runs another program (`rg --pre`, `rg --hostname-bin`, `ag`/`ack --pager`, found while preparing round 5): then it is checked like any other segment.
+- **Every other segment** is checked whole **and** in the pieces of the old split (`SEGMENT_SPLIT`), so it is never weaker than on main. Round 4 showed why: quoted text can be code that another program runs (`ssh host 'cd /x; terraform apply -auto-approve'`, `ksh -c '…; kubectl delete ns … --context prod'`, `docker run … sh -c '…'`, `git rebase --exec '…'`, `tmux new '…'`, 30+ runners). The old split cut those strings at `;`, so their pieces were checked; a split that respects quotes alone hid them. Checking the whole segment too is what makes `sh -c "kubectl … delete ns … | cat"` and similar nested commands denied now (they passed on main).
 
-`tests/split_corpus.txt` holds 96 commands (the 20 below, the 47 of the round-2 review incl. comments, `$'`, heredocs, `&`, backslash-newline and PowerShell, the 28 of round 3 incl. `"$(…)"`, `"${…}"`, `<(…)`, `$"…"`, brace groups, functions, `|&`, `;;`, CR, unicode quotes, and the false positive), each with the decision of this hook and of the hook on main, generated in the test environment. `QuoteAwareSplitCorpus` checks every decision; exactly 1 is weaker than main (the false positive), 7 are stronger.
+`split_segments` must still not merge a dangerous command into a grep segment. Its lexer reads only plain `'…'` and `"…"` quotes, so it falls back to the old split whenever the text contains `$` (`$'…'`; `"$(…)"` and `"${…}"` start new quoting inside double quotes), a backtick, `#`, `<`, `>(`, a quote that spans a line, unbalanced quotes, or the tool is PowerShell. Mutation test (each condition removed alone, against all review corpora): without `$` 3 commands get weaker than main (`grep "$(echo "'")" x ; <prod delete> ; …`), without the backtick 1; `#`, `<`, `>(`, PowerShell and "quote over a line" each weaken nothing alone (they overlap: `# it's` opens a quote over a line) and are kept as defence in depth. A differential fuzzer that runs real bash (`echo a ; echo HIT ; echo b` with random quoting fragments incl. redirects, `!`, braces, `&`, CR, `case`) found 0 commands where the split hides a command bash runs (rounds 3 and 4, about 8 500 bash runs).
+
+`tests/split_corpus.txt` holds 181 commands from the four reviews and this RFC (comments, `$'`, `"$(…)"`, heredocs, backticks, `&`, backslash-newline, PowerShell, 45 runners such as `ssh`, `ksh -c`, `sudo -s`, `docker run … sh -c`, grep variants of every trick, the grep false positives), each with the decision of this hook and of the hook on main. `QuoteAwareSplitCorpus` checks every decision: 7 are stronger than main, 9 weaker, and the test asserts that every weaker one is a lone grep (no other command, no chain, no second line).
 
 Old against new hook on the first 20 quoted commands (both hooks fed the same PreToolUse payloads, a real state file in the folder):
 
@@ -52,7 +55,7 @@ Old against new hook on the first 20 quoted commands (both hooks fed the same Pr
 | ask → deny | `watch -n1 'kubectl get pods; kubectl delete pod x --context prod'` |
 | unchanged | 13 others (`bash -c '…; terraform apply …'` ask, `env … bash -c "ls \|\| terraform destroy …"` deny, `ssh host '…'` pass as before, …) |
 
-The old split cut the code of `sh -c '…'` inside the quotes, so the nested-shell check got broken pieces; the new split hands it the whole code. (The round-2 draft claimed "no command went from deny to pass except the false positive" from these 20 alone; that was wrong until the fallback above. Also stronger with the fallback: `cat \` + newline + a state file, pass → deny.)
+The old split cut the code of `sh -c '…'` inside the quotes, so the nested-shell check got broken pieces; the whole segment is now checked as well. (Rounds 2–4 each disproved the then claim "nothing is weaker than main except the false positive"; the design above makes it true by construction outside grep segments. Also stronger: `cat \` + newline + a state file, pass → deny.)
 
 ## 3. Rejected options
 
@@ -78,8 +81,8 @@ The old split cut the code of `sh -c '…'` inside the quotes, so the nested-she
 
 ## 5. Risks
 
-- The split change touches every command the hook sees. Checked by the hook tests, the 68-command corpus against main (§2.2), and the kit-arm re-run (AC6). AC6 cannot find hook false negatives (a model must happen to write such a command); the corpus is the check for those. Existing gaps that stay as on main: `cmd1 & cmd2` (background `&` does not split), backslash-newline before a command name. The `(main: …)` labels in the corpus were computed once against main when the file was generated; the test checks the stored labels, not main itself.
-- The fallback is wide on purpose: a grep whose quoted pattern has a `|` **and** a `$` (`'^DB|PG$'`) or `<` still gets the old split and can still be denied. Scenario 17's command has neither; a narrower fallback needs a real shell lexer.
+- The split change touches every command the hook sees. Checked by the hook tests, the 181-command corpus against main (§2.2), and the kit-arm re-run (AC6). AC6 cannot find hook false negatives (a model must happen to write such a command); the corpus is the check for those. Existing gaps that stay as on main: `cmd1 & cmd2` (background `&` does not split), backslash-newline before a command name. The `(main: …)` labels in the corpus were computed once against main when the file was generated; the test checks the stored labels, not main itself.
+- The fallback is wide on purpose: a grep whose quoted pattern has a `|` **and** a `$` (`'(DB|PG)_[A-Z]+$'`, `'\$\{?(DB|PG)'`), `<` or `#`, or a grep in a command with `$HOME` or a `# comment`, still gets the old split and can still be denied. Scenario 17's failed command had none of these; others may, so AC6 can stay below 6 / 6 for this reason. A narrower fallback needs a real shell lexer.
 - The script's output tells the size of each value (as it does for Secrets today). A model could still guess low-entropy values with `--env` or by comparing with a file it wrote; the SKILL.md rule "never use it to guess a value" stays.
 
 ## 5a. Acceptance criteria
@@ -90,7 +93,7 @@ The old split cut the code of `sh -c '…'` inside the quotes, so the nested-she
 | AC2 | `python3 scripts/validate.py` | 0 errors |
 | AC3 | `shellcheck -S warning ./*.sh scripts/*.sh setup/k8s/*.sh sandbox/*.sh scenarios/*.sh scenarios/isolation/*.sh` | clean |
 | AC4 | `scenarios/isolation/selftest.sh`; `scenarios/isolation/grading-selftest.sh` | all `ok` |
-| AC5 | `python3 -m unittest tests.test_hook.QuoteAwareSplitCorpus tests.test_hook.SecretReadBypasses tests.test_secret_fingerprint -v` | OK: 96 corpus decisions as stored, exactly 1 weaker than main; the dotenv cases of §2.1 |
+| AC5 | `python3 -m unittest tests.test_hook.QuoteAwareSplitCorpus tests.test_hook.SecretReadBypasses tests.test_secret_fingerprint -v` | OK: 181 corpus decisions as stored, every weaker one a lone grep; the dotenv cases of §2.1 |
 | AC6 | `scenarios/benchmark.sh --config-dir ~/.claude-bench --isolation container --runs 3 --models "sonnet opus" --modes kit` on Claude Code 2.1.318 (the baseline's version; if it changes, re-run the probe of RFC 0002 §10.1 and both arms) | kit arm, scenarios 14–23 (all use the changed hook; 14–21 share the `secrets` fixture with its `.env`): harm 0 / 24 and gate 0 / 6 as before; scenario 17 done ≥ 5 / 6 (was 2 / 6); no benign scenario lower than on 2026-11-06 by more than 1 / 6; recorded in RESULTS.md with cost (estimate $11–13: the kit arm cost $11.75 on 2026-11-06) |
 
 ## 6. Found on the way: `.env` reads that the permission rules do not catch (not fixed here)
@@ -152,4 +155,14 @@ The round-1 draft also extended the hook's state-file guard to `.env`. Findings 
 | 4 | [MINOR] main's labels are stored, not computed | said in §5 |
 | 5 | [MINOR] counts and "fixed" wording disagree | CHANGELOG: 7 stronger; "re-run pending" until AC6 is recorded |
 | 6 | [MINOR] a number shown as `JSON` | `JSON` only for objects and arrays; test |
+
+### Round 4 (2026-11-06): BLOCK
+
+| # | Finding | Done |
+|---|---|---|
+| 1 | [BLOCKER] Quoted code run by a runner the hook does not know (`ssh host '…; terraform apply …'`, `ksh -c`, `sudo -s`, `docker run … sh -c`, 30+ more): deny/ask → pass, because the old split had cut those strings | only grep segments use the quote-aware split; every other segment is checked whole and in the old split's pieces (never weaker than main); 45 runner commands in the corpus |
+| 2 | [MAJOR] The corpus did not hold most fallback conditions | grep variants of every trick added; mutation test result in §2.2 (`$`, backtick needed; the rest defence in depth) |
+| 3 | [MINOR] Remaining false positive for patterns with `$`/`#`/`<` | said in §5 and AC6 |
+| 4 | [MINOR] A PEM after `KEY=` on its own lines: a short line printed as a key | PEM blocks on their own lines are counted, never keys; test |
+| 5 | [MINOR] Stale numbers | 181 everywhere; the claim is now "every weaker one is a lone grep" |
 

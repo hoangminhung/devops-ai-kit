@@ -122,6 +122,7 @@ GIT_PRINTS_FILES = {"show", "diff", "cat-file", "blame", "grep", "archive", "for
 GIT_PATCH_FLAGS = ("-p", "-u", "-U", "--patch", "--word-diff", "--cc", "--color-words", "-L")
 GREP_TOOLS = {"grep", "egrep", "fgrep", "zgrep", "rg", "ag", "ack"}
 ALWAYS_RECURSIVE = {"rg", "ag", "ack"}
+GREP_RUNS_PROGRAM = ("--pre", "--hostname-bin", "--pager")  # rg, rg, ag/ack: run a command given as a value
 # Commands that pass a file name from elsewhere (a pipe, a loop, a variable) to another command.
 INDIRECT = {"xargs", "parallel", "while", "read", "for", "eval", "source", "."}
 # Copy or pack a whole folder: a state file inside is copied in clear text (`tar cf - .`).
@@ -1482,7 +1483,18 @@ def analyse_command(command, cwd, depth=0):
         for inner in re.findall(r"\$\(([^()]*)\)|<\(([^()]*)\)|`([^`]*)`", unquoted):
             hits.extend(analyse_command(next(part for part in inner if part), cwd, depth + 1))
         inline_code_reads_state(command, cwd)
-    segments = [seg.strip() for seg in split_segments(command) if seg.strip()]
+    # Only a grep-like segment is taken as split_segments gives it (`grep -E 'DB|PG' --exclude=… .` is one
+    # command). Every other segment is checked whole AND in the pieces of the plain split, because quoted text
+    # may be code that another program runs (`ssh host 'cd x; terraform apply …'`, `ksh -c '…; …'`): the plain
+    # split catches those pieces, so the hook is never weaker than with the plain split (RFC 0003 §2.2).
+    # A grep that runs another program (`rg --pre`, `rg --hostname-bin`, `ag/ack --pager`) is not exempt.
+    segments = []
+    for seg in split_segments(command):
+        toks, _ = peel(tokenize(seg))
+        base = re.split(r"[\\/]", toks[0])[-1] if toks else ""
+        runs_program = any(t.startswith(GREP_RUNS_PROGRAM) for t in toks[1:])
+        pieces = [seg] if base in GREP_TOOLS and not runs_program else [seg] + SEGMENT_SPLIT.split(seg)
+        segments += [p.strip() for p in dict.fromkeys(pieces) if p.strip()]
     for segment in segments:
         # `export KUBECONFIG=...; kubectl ...` must use the exported file for the later segments.
         exported.update(exported_vars(segment, cwd))

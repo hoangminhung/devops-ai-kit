@@ -203,6 +203,17 @@ class SecretFingerprint(unittest.TestCase):
         result = self.run_script(f"file:{path}")
         self.assertIn("0 key(s), 2 line(s) not KEY=VALUE (not shown)", result.stdout)
 
+    def test_pem_on_the_lines_after_the_key_is_never_keys(self):
+        # Round-4 review: `TLS_KEY=` and then an unquoted PEM; a short padded line was printed as a key.
+        path = self.dotenv("TLS_KEY=\n-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAAS3cret\n"
+                           "SecretPart1x=\n-----END PRIVATE KEY-----\nB=2\n")
+        result = self.run_script(f"file:{path}")
+        self.assertIn("2 key(s), 4 line(s) not KEY=VALUE (not shown)", result.stdout)
+        self.assertNotIn("SecretPart", result.stdout)
+        path = self.dotenv("-----BEGIN CERTIFICATE-----\nShortPad=\n")  # no END: the rest is hidden
+        result = self.run_script(f"file:{path}")
+        self.assertIn("0 key(s), 2 line(s) not KEY=VALUE (not shown)", result.stdout)
+
     def test_numbers_are_text_not_json(self):
         path = self.dotenv('PIN=1234\nCFG={"a": 1}\n')
         result = self.run_script(f"file:{path}")

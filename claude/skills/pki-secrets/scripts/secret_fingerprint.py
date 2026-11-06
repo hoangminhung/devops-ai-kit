@@ -89,6 +89,13 @@ def parse_dotenv(raw):
         i += 1
         if not text or text.startswith(b"#"):
             continue
+        if text.startswith(b"-----BEGIN"):
+            # A PEM block on its own lines (e.g. after `KEY=`): every line up to `-----END` is counted, never a key.
+            first = i - 1
+            while i < len(lines) and b"-----END" not in lines[i - 1]:
+                i += 1
+            bad += i - first
+            continue
         if text.startswith(b"export ") or text.startswith(b"export\t"):
             text = text[7:].lstrip()
         key, sep, value = text.partition(b"=")
