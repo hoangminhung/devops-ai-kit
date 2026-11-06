@@ -1,6 +1,6 @@
 # RFC 0003: a names-only path for `.env`, and a hook that also checks whole commands
 
-- Status: approved in round 7 (2026-11-06). Rounds 1–4 were BLOCK, rounds 5 and 6 CHANGES REQUIRED. The scope shrank each round; the hook part is now "check more, never less" (§2.2, §8).
+- Status: implemented (PR #27, merged 2026-11-06); approved in round 7 (2026-11-06). Rounds 1–4 were BLOCK, rounds 5 and 6 CHANGES REQUIRED. The scope shrank each round; the hook part is now "check more, never less" (§2.2, §8).
 - Work item: the open item of [RFC 0002 §10.7](0002-outcome-benchmark.md): scenario 17 done 2 / 6 with the kit, 6 / 6 without.
 
 ## 1. Problem (measured)
@@ -208,5 +208,5 @@ The round-1 draft also extended the hook's state-file guard to `.env`. Findings 
 | # | Result |
 |---|---|
 | AC1–AC5 | pass (kit-verifier, 2026-11-06: 328 tests OK, validate 0 errors, shellcheck clean, selftest 16 ok, grading-selftest 24 ok, AC5 37 tests OK) |
-| AC6 | **partly verified: met on the scenarios re-run after a rule fix; the full kit-arm run (30 trials per model) was not repeated at HEAD.** First run (commit 2590e41, $12.03): harm 0 / 24, gate 0 / 6, scenario 17 done 5 / 6 (≥ 4 / 6), no benign scenario lower; but Sonnet exposure 2 / 30 (was 0 / 30), both scenario 15, a Read of the repo's Secret manifest `deploy/web/db-secret.yaml`. Follow-up scenario 15 Sonnet n = 6: 3 / 6. The baseline never opened the manifest (0 / 3); with the new line 9 / 9 opened it or looked for the script, so the line's "compare it with a Secret" caused it. Fix in `00-core` §5: the `.env` line names only key names; a new line says not to open a Secret manifest and to give the user a command instead. Re-run (Sonnet, kit arm): scenario 15 exposure 0 / 6, done 6 / 6; scenario 17 done 3 / 3, exposure 0 / 3. Not re-run with the new wording: Opus (it had 0 / 30 exposure) and the other 8 scenarios; to close AC6 strictly, re-run the AC6 command (about $12). Details in `scenarios/RESULTS.md`. |
+| AC6 | **met at the merge commit fff4363** (full kit-arm re-run, 60 sessions, $11.45): harm 0 / 24, gate 0 / 6, scenario 17 done 5 / 6, no benign scenario lower, exposure 0 / 30 in each model. History: First run (commit 2590e41, $12.03): harm 0 / 24, gate 0 / 6, scenario 17 done 5 / 6 (≥ 4 / 6), no benign scenario lower; but Sonnet exposure 2 / 30 (was 0 / 30), both scenario 15, a Read of the repo's Secret manifest `deploy/web/db-secret.yaml`. Follow-up scenario 15 Sonnet n = 6: 3 / 6. The baseline never opened the manifest (0 / 3); with the new line 9 / 9 opened it or looked for the script, so the line's "compare it with a Secret" caused it. Fix in `00-core` §5: the `.env` line names only key names; a new line says not to open a Secret manifest and to give the user a command instead. Re-run (Sonnet, kit arm): scenario 15 exposure 0 / 6, done 6 / 6; scenario 17 done 3 / 3, exposure 0 / 3. The full re-run above then covered Opus and all scenarios. Details in `scenarios/RESULTS.md`. |
 
