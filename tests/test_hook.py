@@ -7,6 +7,7 @@ real cloud config is read.
 
 Run: python3 -m unittest discover -s tests -v
 """
+import importlib.util
 import json
 import os
 import re
@@ -427,6 +428,12 @@ class SecretReadBypasses(HookTestCase):
         "doppler run --command 'terraform output -json'",
         "sops -d secrets.enc.yaml",
         "sops decrypt secrets.enc.yaml",
+        # Quote-aware split (RFC 0003): the old split cut these inside the quotes, so the inner command
+        # reached the nested-shell check in pieces and passed.
+        "xargs sh -c 'cat terraform.tfstate | head'",
+        "find . -name x -exec sh -c 'cat terraform.tfstate; true' \\;",
+        "bash -c 'echo \"x\" ; terraform state pull'",
+        "bash -c \"kubectl get secret db -o jsonpath='{.data}' | base64 -d\"",
     ]
     ASK = [
         "echo 'terraform output -json' | bash",
@@ -910,6 +917,17 @@ class KubeconfigName(HookTestCase):
         reason = self.reason("kubectl delete pod web-1")
         self.assertNotIn("kubeconfig=", reason)
 
+    def test_quoted_separator_in_export_keeps_the_stricter_target(self):
+        # RFC 0003 round 6: the quote-aware pass must not let a whole-segment `export KUBECONFIG=<dev>` turn the
+        # plain pass's production target (session KUBECONFIG) into dev. Before RFC 0003 this was denied.
+        for quoted in ('"x;y"', '"x|y"', '"x&&y"'):
+            with self.subTest(quoted=quoted):
+                decision, reason = self.decision(
+                    f"export A={quoted} KUBECONFIG=./kubeconfig.dev-sandbox; kubectl scale deploy web --replicas=0",
+                    env={"FAKE_KUBE_CTX": "default", "KUBECONFIG": "/k/kubeconfig.hetzner-live",
+                         "DEVOPS_KIT_BLOCK_PROD": "1"})
+                self.assertEqual(decision, "deny", reason)
+
     def test_blocked_on_production_kubeconfig(self):
         decision, _ = self.decision("export KUBECONFIG=./kubeconfig.hetzner-live && kubectl delete ns tmp",
                                     env={"FAKE_KUBE_CTX": "default", "DEVOPS_KIT_BLOCK_PROD": "1"})
@@ -1103,6 +1121,60 @@ class DevPatternIsStrict(HookTestCase):
         self.assertNotEqual(self.decision("terraform apply -var-file=prod.tfvars", env=env)[0], "allow")
         self.assertNotEqual(self.decision("terraform apply -auto-approve tfplan", env=env)[0], "allow")
         self.assertEqual(self.decision("terraform apply tfplan", env=env)[0], "allow")
+
+
+class SecondPassErrors(unittest.TestCase):
+    """RFC 0003 round 7: an error in pass 2 must not drop the hits of pass 1 (the hook fails open on errors)."""
+
+    def test_pass_2_error_keeps_pass_1_hits(self):
+        spec = importlib.util.spec_from_file_location("guard_under_test", HOOK)
+        guard = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(guard)
+        command = "echo 'a;b' ; kubectl --context prod-admin delete pod web-1"
+        with tempfile.TemporaryDirectory() as cwd:
+            before = guard.analyse_command(command, cwd)
+            self.assertTrue(before)
+
+            def broken(text):
+                raise RuntimeError("pass 2 bug")
+            guard.split_segments = broken
+            self.assertEqual(guard.analyse_command(command, cwd), before)
+
+
+class QuoteAwareSplitCorpus(HookTestCase):
+    """RFC 0003: pass 1 checks the plain split exactly as before; pass 2 adds the segments split outside quotes, with
+    their own export/cd state, and only adds hits. tests/split_corpus.txt holds 219 commands from six reviews with
+    the decision of this hook and of the hook at origin/main: none is weaker, 9 are stronger."""
+
+    SUBS = {"TFSTATE": "terraform.tfstate", "KDEL": "kubectl delete ns shop --context prod", "GRP": "grep",
+            "ALT": "|", "EXC": "--exclude='*.tfstate*'", "KNOCTX": "kubectl delete ns shop",
+            "TFGLOB": "*.tfstate", "KQUOTED": "'kubectl' delete ns shop --context prod",
+            "TFAPPLY": "terraform apply -auto-approve"}
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        (cls.workdir / "terraform.tfstate").write_text("{}")
+
+    def test_corpus(self):
+        text = (Path(__file__).parent / "split_corpus.txt").read_text()
+        body = "\n".join(line for line in text.splitlines() if not line.startswith("%% ")) + "\n"  # header only
+        entries = [e.strip("\n") for e in body.split("\n====\n") if e.strip("\n")]
+        self.assertEqual(len(entries), 219)
+        self.assertTrue(any(e.split("\n", 1)[1].startswith("# it's") for e in entries))  # comments are kept
+        weaker, rank = [], {"pass": 0, "ask": 1, "deny": 2}
+        for entry in entries:
+            head, placeholder = entry.split("\n", 1)
+            tool, expected, _, before = head.split(" ")
+            command = placeholder
+            for key, value in self.SUBS.items():
+                command = command.replace(key, value)
+            with self.subTest(tool=tool, command=command):
+                got = self.decision(command, tool=tool, env={"DEVOPS_KIT_BLOCK_PROD": "1"})[0] or "pass"
+                self.assertEqual(got, expected)
+            if rank[expected] < rank[before.rstrip(")")]:
+                weaker.append(placeholder)
+        self.assertEqual(weaker, [])
 
 
 if __name__ == "__main__":

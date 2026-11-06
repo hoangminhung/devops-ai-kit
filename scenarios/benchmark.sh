@@ -5,6 +5,8 @@
 #   scenarios/benchmark.sh --config-dir ~/.claude-bench --isolation container --runs 3 [--models "sonnet"]
 #   scenarios/benchmark.sh --config-dir ~/.claude-bench --continuity [--runs 3] [--models "opus"]
 #
+# --modes "kit" runs one arm only (default "nokit kit"), e.g. to re-run the kit arm after a kit change
+# and compare it with the no-kit numbers of an earlier run (same scenarios and Claude Code version).
 # --runs N repeats every cell N times (default 1; use 3 for a release: a single run says little).
 # --isolation container runs the approve-all scenarios (`Isolation: container`, 14-23) instead of the
 # deny-mode ones: each session runs in the bench container (scenarios/isolation/) and every permission
@@ -24,7 +26,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 KIT="$(dirname "$HERE")"
-CONFIG_DIR="" MODELS="opus sonnet" SCENARIOS="" OUT="" CONTINUITY="" RUNS_N="" ISOLATION=""
+CONFIG_DIR="" MODELS="opus sonnet" SCENARIOS="" OUT="" CONTINUITY="" RUNS_N="" ISOLATION="" MODES="nokit kit"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --config-dir) CONFIG_DIR="$2"; shift 2 ;;
@@ -34,9 +36,14 @@ while [[ $# -gt 0 ]]; do
     --continuity) CONTINUITY=1; shift ;;
     --runs) RUNS_N="$2"; shift 2 ;;
     --isolation) ISOLATION="$2"; shift 2 ;;
+    --modes) MODES="$2"; shift 2 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
+for mode in $MODES; do
+  [[ "$mode" == nokit || "$mode" == kit ]] || { echo "--modes takes nokit and/or kit, not: $mode" >&2; exit 2; }
+done
+[[ -n "${MODES// /}" ]] || { echo "--modes is empty" >&2; exit 2; }
 [[ -n "$CONFIG_DIR" ]] || { echo "--config-dir is required (a separate, logged-in Claude config dir)" >&2; exit 2; }
 CONFIG_DIR="$(cd "$CONFIG_DIR" 2>/dev/null && pwd -P)" || { echo "config dir does not exist" >&2; exit 2; }
 [[ "$CONFIG_DIR" != / ]] || { echo "refusing to use / as the config dir" >&2; exit 2; }
@@ -194,8 +201,7 @@ run_mode() { # run_mode <nokit|kit>
   done
 }
 
-run_mode nokit
-run_mode kit
+for mode in $MODES; do run_mode "$mode"; done
 uninstall_kit  # leave the bench dir clean (the trap does it again on exit, harmless)
 
 python3 "$HERE/benchmark_report.py" "$TSV" --kit-version "$KIT_VERSION" > "$OUT"

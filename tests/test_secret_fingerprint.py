@@ -122,6 +122,131 @@ class SecretFingerprint(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("not a Secret with base64 data", result.stderr)
 
+    def dotenv(self, text, name=".env"):
+        folder = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, folder)
+        path = Path(folder, name)
+        path.write_text(text)
+        return path
+
+    def test_dotenv_names_sizes_and_kinds_only(self):
+        path = self.dotenv("# app\nDB_HOST=db.internal\nexport DB_USER='app'\nDB_PASSWORD=\"S3cret-value\"  \n"
+                           "DB_PORT=5432 # default\n\nS3cret-orphan-line\nnot a key=S3cret-x\nEMPTY=\n")
+        result = self.run_script(f"file:{path}")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("5 key(s), 2 line(s) not KEY=VALUE (not shown)", result.stdout)
+        self.assertIn("DB_PASSWORD: 12 bytes, text", result.stdout)
+        self.assertIn("DB_USER: 3 bytes, text", result.stdout)
+        self.assertIn("DB_PORT: 4 bytes", result.stdout)
+        self.assertIn("EMPTY: 0 bytes, empty", result.stdout)
+        self.assertNotIn("db.internal", result.stdout)
+
+    def test_dotenv_compared_with_a_secret_and_a_file(self):
+        path = self.dotenv("password=S3cret-value\nuser=app\n")
+        result = self.run_script(f"file:{path}", "prod:shop/db")
+        self.assertIn("password: match", result.stdout)
+        self.assertIn("ca.crt: only in prod:shop/db", result.stdout)
+        other = self.dotenv("password=S3cret-valuX\nuser=app\n", ".env.prod")
+        result = self.run_script(f"file:{path}", f"file:{other}")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("password: differ (12 / 12 bytes)", result.stdout)
+        self.assertIn("user: match", result.stdout)
+
+    def test_dotenv_errors_name_the_path_not_the_content(self):
+        result = self.run_script("file:/no/such/.env")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("cannot read (No such file or directory)", result.stderr)
+        self.assertEqual(self.run_script("file:").returncode, 2)
+
+    def test_only_dotenv_file_names(self):
+        for name in ("terraform.tfstate", "config", "id_rsa", "values-secret.yaml", "env", ".envrc"):
+            with self.subTest(name=name):
+                path = self.dotenv("pw=S3cret-value\n", name)
+                result = self.run_script(f"file:{path}")
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("only dotenv files", result.stderr)
+        for name in (".env", ".env.prod", ".env.local.example", "app.env"):
+            with self.subTest(name=name):
+                self.assertEqual(self.run_script(f"file:{self.dotenv('pw=S3cret-value', name)}").returncode, 0)
+
+    def test_lines_that_hold_values_are_never_read_as_key_names(self):
+        path = self.dotenv("client-key-data: LS0tS3cret==\n-----BEGIN PRIVATE KEY-----\nMIIS3cret+/=\n"
+                           "-----END PRIVATE KEY-----\nDATABASE_URL=postgres://u:S3cret@h/db?sslmode=require\n"
+                           "a.b=S3cret\nS3cret token=1\n")
+        result = self.run_script(f"file:{path}")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("1 key(s), 6 line(s) not KEY=VALUE (not shown)", result.stdout)
+        self.assertIn("DATABASE_URL:", result.stdout)
+        self.assertNotIn("LS0t", result.stdout)
+
+    def test_multiline_quoted_value_is_never_read_as_keys(self):
+        # The last base64 line of a PEM is often `[A-Za-z0-9]+=`, which looks like KEY=VALUE (round-2 review).
+        path = self.dotenv('A=1\nAPP_KEY="-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAAS3cret\n'
+                           'S3cretTAILabcXYZ0123456789q=\n-----END PRIVATE KEY-----"\nB=2\n')
+        result = self.run_script(f"file:{path}")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("3 key(s)", result.stdout)
+        self.assertNotIn("not KEY=VALUE", result.stdout)
+        self.assertNotIn("TAIL", result.stdout)
+        self.assertIn("APP_KEY: 119 bytes, PEM", result.stdout)  # 4 lines and 3 newlines
+
+    def test_unquoted_multiline_pem_and_base64_lines_are_never_keys(self):
+        # Round-3 review: an unquoted PEM whose base64 line is `[A-Za-z0-9]+=` was printed as a key.
+        path = self.dotenv("TLS_KEY=-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAAS3cret\n"
+                           "Q2hhbmdlTWVQbGVhc2Ux=\n-----END PRIVATE KEY-----\nB=2\nS3cretQ2hhbmdlTWVQ1=x\n")
+        result = self.run_script(f"file:{path}")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("2 key(s), 1 line(s) not KEY=VALUE (not shown)", result.stdout)
+        self.assertIn("TLS_KEY:", result.stdout)
+        self.assertNotIn("Q2hh", result.stdout)
+        path = self.dotenv("TLS_KEY=-----BEGIN PRIVATE KEY-----\nQ2hhbmdlTWVQbGVhc2Ux=\n")  # no END line
+        result = self.run_script(f"file:{path}")
+        self.assertIn("0 key(s), 2 line(s) not KEY=VALUE (not shown)", result.stdout)
+
+    def test_pem_on_the_lines_after_the_key_is_never_keys(self):
+        # Round-4 review: `TLS_KEY=` and then an unquoted PEM; a short padded line was printed as a key.
+        path = self.dotenv("TLS_KEY=\n-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAAS3cret\n"
+                           "SecretPart1x=\n-----END PRIVATE KEY-----\nB=2\n")
+        result = self.run_script(f"file:{path}")
+        self.assertIn("2 key(s), 4 line(s) not KEY=VALUE (not shown)", result.stdout)
+        self.assertNotIn("SecretPart", result.stdout)
+        path = self.dotenv("-----BEGIN CERTIFICATE-----\nShortPad=\n")  # no END: the rest is hidden
+        result = self.run_script(f"file:{path}")
+        self.assertIn("0 key(s), 2 line(s) not KEY=VALUE (not shown)", result.stdout)
+
+    def test_numbers_are_text_not_json(self):
+        path = self.dotenv('PIN=1234\nCFG={"a": 1}\n')
+        result = self.run_script(f"file:{path}")
+        self.assertIn("PIN: 4 bytes, text", result.stdout)
+        self.assertIn("CFG: 8 bytes, JSON", result.stdout)
+
+    def test_unclosed_quote_hides_the_rest(self):
+        path = self.dotenv('A=1\nPW="S3cret\nS3cretTAIL=x\n')
+        result = self.run_script(f"file:{path}")
+        self.assertIn("1 key(s), 2 line(s) not KEY=VALUE (not shown)", result.stdout)
+        self.assertNotIn("TAIL", result.stdout)
+
+    def test_escaped_quotes_in_double_quotes(self):
+        path = self.dotenv('PW="a\\"b"\nX=y\n')
+        result = self.run_script(f"file:{path}")
+        self.assertIn("PW: 3 bytes", result.stdout)
+        self.assertIn("2 key(s)", result.stdout)
+
+    def test_links_fifos_and_big_files_are_refused(self):
+        target = self.dotenv("aws_secret_access_key = S3cret\n", "credentials")
+        link = target.parent / ".env"
+        link.symlink_to(target)
+        result = self.run_script(f"file:{link}")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("only dotenv files", result.stderr)
+        fifo = target.parent / "x.env"
+        os.mkfifo(fifo)
+        result = self.run_script(f"file:{fifo}")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("not a regular file", result.stderr)
+        big = self.dotenv("A=" + "x" * (1024 * 1024) + "\n", "big.env")
+        self.assertIn("larger than", self.run_script(f"file:{big}").stderr)
+
     def test_kubectl_errors_do_not_echo_response_bodies(self):
         result = self.run_script("shop/noisy")
         self.assertEqual(result.returncode, 2)

@@ -29,6 +29,7 @@ when_to_use: Use when handling TLS certificates, Kubernetes secrets, credentials
   - `SPEC` (`[context:]namespace/name`): key names, sizes, kinds (PEM, JSON, text);
   - `SPEC OTHER_SPEC`: match / differ per key (for example prod vs staging);
   - `SPEC --env KEY=ENV_VAR`: compares one key with a value the user exported in the shell before starting Claude.
+  - `file:PATH` in place of a SPEC reads a dotenv file (`.env`, `.env.<name>`, `<name>.env`): `file:.env` gives its key names, sizes and kinds; `file:.env shop/db` compares it with a Secret. Lines that are not `KEY=VALUE` are counted, never shown. Compare a file only with a Secret, a file or an `--env` value the user named; never write a file of guesses to compare against.
   It prints no values and no hashes. Exit code 0 = all equal, 1 = something differs or is missing, 2 = error.
   It is not on the allow list, so the user confirms each run. Use `--env` only with a value the user set; never use it to guess a value.
 

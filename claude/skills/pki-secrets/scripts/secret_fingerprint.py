@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare Kubernetes Secrets without printing their values (devops-ai-kit).
+"""Compare Kubernetes Secrets and .env files without printing their values (devops-ai-kit).
 
 The kit never lets the AI print a secret value: it would end up in the chat, in
 the session transcript on disk and at the model provider. Most of the time the
@@ -14,7 +14,11 @@ Usage:
   secret_fingerprint.py SPEC OTHER_SPEC          # compare two Secrets key by key
   secret_fingerprint.py SPEC --env KEY=ENV_VAR   # compare one key with a value the user exported
 
-SPEC is [context:]namespace/name, for example `aks-prod-ro:shop/db-credentials`.
+SPEC is [context:]namespace/name, for example `aks-prod-ro:shop/db-credentials`, or file:PATH for a
+dotenv file (`KEY=VALUE`, `export KEY=VALUE`, quotes, `#` comments), for example `file:.env`:
+  secret_fingerprint.py file:.env                                  # key names, sizes, kinds
+  secret_fingerprint.py file:.env aks-prod-ro:shop/db-credentials  # a .env against a cluster Secret
+Lines that are not KEY=VALUE are counted, never shown.
 Exit code: 0 when everything compared is equal (or nothing was compared), 1 when
 something differs or is missing, 2 on errors (bad SPEC, kubectl failed).
 """
@@ -25,6 +29,7 @@ import hmac
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 
@@ -36,8 +41,124 @@ SPEC_RE = re.compile(r"^(?:(?P<context>[^\s-]\S*):)?(?P<namespace>[a-z0-9]([a-z0
 BASE64_RUN = re.compile(r"(?=[A-Za-z0-9+/]*[0-9+/=])[A-Za-z0-9+/=]{8,}")  # needs a digit, + / or =: keeps "NotFound"
 
 
+DOTENV_KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+# Only dotenv files: `.env`, `.env.prod`, `app.env`. Not any path: the script is not a way to look into
+# kubeconfigs, state or keys (they are not KEY=VALUE files, and other tools cover them).
+DOTENV_NAME = re.compile(r"\.env(\.[A-Za-z0-9_-]+)*|[A-Za-z0-9_.-]+\.env")
+
+
 class SpecError(Exception):
     pass
+
+
+ESCAPES = {b"n": b"\n", b"t": b"\t", b'"': b'"', b"\\": b"\\"}
+MAX_FILE = 1024 * 1024
+# A "key" of 16+ letters and digits with no `_` is more likely a line of base64 (a key or a certificate) than a
+# variable name: it is counted as not KEY=VALUE, never shown.
+LOOKS_ENCODED = re.compile(r"(?=.*[0-9])[A-Za-z0-9]{16,}")
+
+
+def closing_quote(text, quote, start):
+    """Index of the quote that ends a value, or -1. In double quotes a backslash escapes the next byte."""
+    i = start
+    while i < len(text):
+        if quote == b'"' and text[i:i + 1] == b"\\":
+            i += 2
+            continue
+        if text[i:i + 1] == quote:
+            return i
+        i += 1
+    return -1
+
+
+def unescape(value):
+    return re.sub(rb"\\(.)", lambda m: ESCAPES.get(m.group(1), b"\\" + m.group(1)), value)
+
+
+def parse_dotenv(raw):
+    """{key: bytes} of a dotenv file, and the number of lines that are not KEY=VALUE (never echoed).
+
+    A quoted value may span lines (a PEM key, as python-dotenv and Node dotenv allow): its lines are part of the
+    value and are never read as keys. If the file ends before the quote closes, those lines count as not
+    KEY=VALUE and the key is left out."""
+    data, bad = {}, 0
+    lines = raw.splitlines()
+    i = 0
+    while i < len(lines):
+        text = lines[i].strip()
+        i += 1
+        if not text or text.startswith(b"#"):
+            continue
+        if text.startswith(b"-----BEGIN"):
+            # A PEM block on its own lines (e.g. after `KEY=`): every line up to `-----END` is counted, never a key.
+            first = i - 1
+            while i < len(lines) and b"-----END" not in lines[i - 1]:
+                i += 1
+            bad += i - first
+            continue
+        if text.startswith(b"export ") or text.startswith(b"export\t"):
+            text = text[7:].lstrip()
+        key, sep, value = text.partition(b"=")
+        key = key.strip()
+        try:
+            name = key.decode("ascii")
+        except UnicodeDecodeError:
+            name = ""
+        if not sep or not DOTENV_KEY.fullmatch(name) or LOOKS_ENCODED.fullmatch(name):
+            bad += 1
+            continue
+        value = value.strip()
+        quote = value[:1]
+        if quote in (b"'", b'"'):
+            body, first = value[1:], i - 1
+            end = closing_quote(body, quote, 0)
+            while end < 0 and i < len(lines):
+                scanned = len(body) + 1
+                body += b"\n" + lines[i]
+                i += 1
+                end = closing_quote(body, quote, scanned)
+            if end < 0:
+                bad += i - first  # unclosed quote: the key line and every line after it
+                continue
+            value = body[:end]
+            if quote == b'"':
+                value = unescape(value)
+        elif value.startswith(b"-----BEGIN") and b"-----END" not in value:
+            # An unquoted PEM over several lines: its lines are the value, never keys.
+            body, first = value, i - 1
+            while i < len(lines) and b"-----END" not in lines[i]:
+                body += b"\n" + lines[i].strip()
+                i += 1
+            if i == len(lines):
+                bad += i - first
+                continue
+            value = body + b"\n" + lines[i].strip()
+            i += 1
+        else:
+            value = re.split(rb"\s+#", value, maxsplit=1)[0].rstrip()
+        data[name] = value
+    return data, bad
+
+
+def read_file(spec):
+    path = spec[len("file:"):]
+    if not path:
+        raise SpecError("bad SPEC 'file:': give a path, e.g. file:.env")
+    # The name of the file itself, after links: a `.env` link to ~/.aws/credentials is not a dotenv file.
+    if not DOTENV_NAME.fullmatch(os.path.basename(path)) or \
+            not DOTENV_NAME.fullmatch(os.path.basename(os.path.realpath(path))):
+        raise SpecError(f"{spec}: only dotenv files (.env, .env.<name>, <name>.env)")
+    try:
+        info = os.stat(path)
+        if not stat.S_ISREG(info.st_mode):
+            raise SpecError(f"{spec}: not a regular file")
+        if info.st_size > MAX_FILE:
+            raise SpecError(f"{spec}: larger than {MAX_FILE} bytes, not a dotenv file")
+        with open(path, "rb") as handle:
+            raw = handle.read(MAX_FILE + 1)
+    except OSError as exc:
+        raise SpecError(f"{spec}: cannot read ({exc.strerror})")
+    return parse_dotenv(raw)
 
 
 def parse_spec(text):
@@ -45,6 +166,13 @@ def parse_spec(text):
     if not match:
         raise SpecError(f"bad SPEC {text!r}: use [context:]namespace/name")
     return match.group("context"), match.group("namespace"), match.group("name")
+
+
+def read_spec(spec):
+    """({key: bytes}, number of unparsed lines) of a Secret or a file:PATH."""
+    if spec.startswith("file:"):
+        return read_file(spec)
+    return read_secret(spec), 0
 
 
 def read_secret(spec):
@@ -77,8 +205,8 @@ def kind(value):
     except UnicodeDecodeError:
         return "binary"
     try:
-        json.loads(text)
-        return "JSON"
+        if isinstance(json.loads(text), (dict, list)):
+            return "JSON"  # a number or a string is "text": "4 bytes, JSON" would say "a 4-digit number"
     except ValueError:
         pass
     note = " (ends with newline)" if text.endswith("\n") else ""
@@ -98,8 +226,8 @@ def compare(a, b):
     return "differ"
 
 
-def describe(spec, data):
-    lines = [f"{spec}: {len(data)} key(s)"]
+def describe(spec, data, bad=0):
+    lines = [f"{spec}: {len(data)} key(s)" + (f", {bad} line(s) not KEY=VALUE (not shown)" if bad else "")]
     for key in sorted(data):
         lines.append(f"  {key}: {len(data[key])} bytes, {kind(data[key])}")
     return lines, True
@@ -140,16 +268,16 @@ def compare_env(spec, data, pairs):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Compare Kubernetes Secrets without printing values.")
+    parser = argparse.ArgumentParser(description="Compare Kubernetes Secrets and .env files without printing values.")
     parser.add_argument("spec")
     parser.add_argument("other", nargs="?")
     parser.add_argument("--env", action="append", default=[], metavar="KEY=ENV_VAR")
     args = parser.parse_args(argv)
     try:
-        data = read_secret(args.spec)
-        lines, ok = describe(args.spec, data)
+        data, bad = read_spec(args.spec)
+        lines, ok = describe(args.spec, data, bad)
         if args.other:
-            more, ok = compare_secrets(args.spec, data, args.other, read_secret(args.other))
+            more, ok = compare_secrets(args.spec, data, args.other, read_spec(args.other)[0])
             lines += more
         if args.env:
             more, env_ok = compare_env(args.spec, data, args.env)

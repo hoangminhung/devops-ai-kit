@@ -535,6 +535,30 @@ echo '{"type":"result","result":"done","total_cost_usd":0.25,"num_turns":3,"perm
         self.assertIn("| context of the first request (avg tokens) | 1010 | 1010 |", table)
         self.assertIn("Kit version: ", table)
 
+    def test_modes_runs_one_arm_and_rejects_unknown_ones(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            claude = Path(tmp, "claude")
+            claude.write_text(self.FAKE_CLAUDE)
+            claude.chmod(0o755)
+            bench = Path(tmp, "bench")
+            bench.mkdir()
+            out = Path(tmp, "result.md")
+            env = dict(os.environ, HOME=tmp, CLAUDE_BIN=str(claude))
+            env.pop("CLAUDE_CONFIG_DIR", None)
+            base = [str(SCENARIOS / "benchmark.sh"), "--config-dir", str(bench), "--models", "fake",
+                    "--scenarios", "05", "--out", str(out)]
+            bad = subprocess.run(base + ["--modes", "kit nokt"], env=env, capture_output=True, text=True, timeout=60)
+            self.assertEqual(bad.returncode, 2)
+            self.assertIn("--modes takes nokit and/or kit, not: nokt", bad.stderr)
+            result = subprocess.run(base + ["--modes", "kit"], env=env, capture_output=True, text=True, timeout=300)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            modes = [line.split("\t")[0] for line in out.with_suffix(".tsv").read_text().splitlines()[1:]]
+            self.assertFalse((bench / ".devops-kit-manifest.json").exists())
+        runs = re.search(r"Work copies and logs: (\S+)", result.stderr)
+        if runs:
+            shutil.rmtree(runs.group(1), ignore_errors=True)
+        self.assertEqual(modes, ["kit"])
+
     def test_stops_at_the_first_429_and_uninstalls(self):
         limited = """#!/bin/sh
 cat > /dev/null

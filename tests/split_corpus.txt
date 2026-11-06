@@ -1,0 +1,718 @@
+%% Commands and the hook decision for each (RFC 0003). Placeholders: see SUBS in tests/test_hook.py.
+%% `(main: …)` is the decision of the hook at origin/main (`git show origin/main:<hook>`), computed by a dev script
+%% when this file was made, in the same environment as the test;
+%% no entry is weaker than it (the hook checks the plain pieces as before, plus whole segments).
+%% Format: `<tool> <decision> (main: <decision>)`, then the command, then `====`. Header lines start with %%.
+Bash deny (main: deny)
+echo $'\'' ; KDEL ; echo \'
+====
+Bash deny (main: deny)
+echo $'\'' ; cat TFSTATE ; echo \'
+====
+Bash ask (main: ask)
+echo $'\'' ; TFAPPLY ; echo \'
+====
+Bash deny (main: deny)
+# it's fine
+KDEL
+# that's it
+====
+Bash deny (main: deny)
+# it's fine
+cat TFSTATE
+# that's it
+====
+Bash ask (main: ask)
+echo hi # it's
+TFAPPLY # that's it
+====
+Bash deny (main: deny)
+KDEL # don't
+====
+Bash deny (main: deny)
+echo "$(kubectl get pods; KDEL)"
+====
+Bash deny (main: deny)
+echo "$(true; cat TFSTATE)"
+====
+Bash deny (main: deny)
+echo "`true; cat TFSTATE`"
+====
+Bash pass (main: pass)
+kubectl get pods & KDEL
+====
+Bash deny (main: deny)
+true & cat TFSTATE
+====
+Bash pass (main: pass)
+kubectl \
+  --context prod delete ns shop
+====
+Bash deny (main: pass)
+cat \
+  TFSTATE
+====
+Bash deny (main: deny)
+echo 'a' \
+; cat TFSTATE
+====
+Bash deny (main: deny)
+cat > f.txt <<'EOF2'
+don't
+EOF2
+KDEL
+====
+Bash deny (main: deny)
+cat > f.txt <<EOF2
+it's
+EOF2
+KDEL
+echo 'x
+====
+Bash deny (main: deny)
+cat > f.txt <<EOF2
+it's
+EOF2
+cat TFSTATE
+echo 'x
+====
+Bash deny (main: deny)
+echo "it's" ; KDEL
+====
+Bash deny (main: deny)
+echo 'say "hi' ; KDEL ; echo '"'
+====
+Bash deny (main: deny)
+echo "a\"b" ; KDEL
+====
+Bash deny (main: deny)
+echo 'a\'; KDEL ; echo 'b'
+====
+Bash deny (main: deny)
+echo "x" |& cat TFSTATE
+====
+Bash deny (main: deny)
+GRP -E 'aALTb' . ; cat TFSTATE
+====
+Bash deny (main: deny)
+GRP -E 'aALTb' TFSTATE
+====
+Bash deny (main: deny)
+x='a'"'"'b' ; KDEL
+====
+Bash deny (main: deny)
+echo ${X:-'}'} ; KDEL
+====
+Bash deny (main: deny)
+echo $"it" ; KDEL
+====
+Bash deny (main: deny)
+f=TFSTATE; cat "$f"
+====
+Bash deny (main: deny)
+GRP -rn 'xALTy' . ALT xargs cat
+====
+Bash deny (main: deny)
+GRP -rnE 'DBALTPG' .
+====
+Bash deny (main: deny)
+GRP -rnE 'DBALTPG' --exclude='*.tfstate*' . ; GRP -r x .
+====
+Bash deny (main: deny)
+echo hi # dir C:\
+KDEL
+====
+Bash ask (main: ask)
+echo hi # dir C:\
+TFAPPLY
+====
+Bash deny (main: deny)
+# Let's check the pods first
+kubectl get pods -n shop
+# Now we'll clean up
+KDEL
+====
+Bash ask (main: ask)
+# Check what's there
+ls
+# Apply (it's reviewed)
+TFAPPLY
+====
+Bash ask (main: ask)
+kubectl get pods # what's running
+TFAPPLY # that's the fix
+====
+Bash deny (main: deny)
+echo "don't" # it's ok
+KDEL
+# that's it
+====
+Bash deny (main: deny)
+python3 - <<'PY'
+print("it's")
+PY
+KDEL
+====
+Bash deny (main: deny)
+cat <<EOF2 | kubectl apply -f -
+note: it's
+EOF2
+KDEL
+# that's it
+====
+Bash deny (main: deny)
+ls # it's
+cat TFSTATE # that's
+====
+Bash deny (main: deny)
+ls # it's
+head -c 100 TFSTATE # that's
+====
+Bash deny (main: deny)
+ls # it's
+GRP -r password . # that's
+====
+Bash deny (main: deny)
+echo $'a\'b' ; KDEL ; echo \'
+====
+Bash deny (main: deny)
+printf $'it\'s\n'; KDEL; echo "'"
+====
+PowerShell deny (main: deny)
+echo `' ; KDEL ; echo `'
+====
+PowerShell deny (main: deny)
+echo `' ; cat TFSTATE ; echo `'
+====
+Bash deny (main: deny)
+echo "$(echo "'")" ; KDEL ; echo "$(echo "'")"
+====
+Bash deny (main: deny)
+echo "${x:-"'"}" ; KDEL ; echo "${x:-"'"}"
+====
+Bash deny (main: deny)
+echo "${x:-'"'}" ; KDEL ; echo "${x:-'"'}"
+====
+Bash deny (main: deny)
+a="$(echo "don't")"; KDEL; b="$(echo "won't")"
+====
+Bash deny (main: deny)
+a="$(echo "don't")"; cat TFSTATE; b="$(echo "won't")"
+====
+Bash ask (main: ask)
+a="$(echo "don't")" && TFAPPLY && b="$(echo "won't")"
+====
+Bash deny (main: deny)
+echo "${x:-"'"}" ; cat TFSTATE ; echo "${x:-"'"}"
+====
+Bash deny (main: deny)
+x="$(printf "'")"; KDEL; y="$(printf "'")"
+====
+Bash deny (main: deny)
+echo "$(echo '"')" ; KDEL ; echo "$(echo '"')"
+====
+Bash deny (main: deny)
+diff <(echo "'") x ; KDEL ; diff <(echo "'") x
+====
+Bash deny (main: deny)
+echo "$((1))'" ; KDEL ; echo "'"
+====
+Bash deny (main: deny)
+echo $"'" ; KDEL ; echo $"'"
+====
+Bash deny (main: deny)
+echo \' ; KDEL ; echo \'
+====
+Bash deny (main: deny)
+{ echo "a;b"; KDEL; }
+====
+Bash deny (main: deny)
+f() { echo 'x|y'; KDEL; }; f
+====
+Bash deny (main: deny)
+( echo 'a|b' ; cat TFSTATE )
+====
+Bash deny (main: deny)
+echo 'a' |& KDEL
+====
+Bash deny (main: deny)
+echo 'x';; KDEL
+====
+Bash deny (main: deny)
+echo 'a'	;	KDEL
+====
+Bash deny (main: deny)
+echo 'a'
+KDEL
+====
+Bash deny (main: deny)
+echo “a;b” ; KDEL
+====
+Bash deny (main: deny)
+sh -c "echo \"'\" ; KDEL ; echo \"'\""
+====
+Bash deny (main: deny)
+bash -c 'echo "$(echo "'"'"'")" ; KDEL ; echo "$(echo "'"'"'")"'
+====
+Bash deny (main: deny)
+echo "${x//'/}" ; KDEL ; echo "${x//'/}"
+echo hi
+KDEL
+====
+Bash deny (main: deny)
+echo "${x//'/}" ; KDEL ; echo "${x//'/}"
+====
+Bash deny (main: deny)
+echo "$(echo x ; KDEL ; echo y)"
+====
+Bash deny (main: deny)
+echo "$(echo  ; KDEL ; echo a))\'\$"
+====
+Bash deny (main: deny)
+echo "$(echo echo 	a] ; KDEL ; echo )"
+====
+Bash deny (main: deny)
+ksh -c 'true; KDEL'
+====
+Bash deny (main: deny)
+fish -c 'true; KDEL'
+====
+Bash deny (main: deny)
+busybox sh -c 'true; KDEL'
+====
+Bash deny (main: deny)
+ash -c 'true; KDEL'
+====
+Bash deny (main: deny)
+mksh -c 'true; KDEL'
+====
+Bash deny (main: deny)
+tcsh -c 'true; KDEL'
+====
+Bash deny (main: deny)
+ssh localhost 'true; KDEL'
+====
+Bash ask (main: ask)
+ssh host 'cd /x; TFAPPLY'
+====
+Bash deny (main: deny)
+ansible localhost -m shell -a 'true; KDEL'
+====
+Bash deny (main: deny)
+docker run --rm img sh -c 'true; KDEL'
+====
+Bash deny (main: deny)
+kubectl exec pod -- sh -c 'true; KDEL'
+====
+Bash deny (main: deny)
+chroot / sh -c 'true; KDEL'
+====
+Bash deny (main: deny)
+unshare -r sh -c 'true; KDEL'
+====
+Bash deny (main: deny)
+nsenter -t 1 -m sh -c 'true; KDEL'
+====
+Bash deny (main: deny)
+runuser -u x -- sh -c 'true; KDEL'
+====
+Bash deny (main: deny)
+systemd-run --user sh -c 'true; KDEL'
+====
+Bash deny (main: deny)
+chrt 0 sh -c 'true; KDEL'
+====
+Bash deny (main: deny)
+tmux new -d 'true; KDEL'
+====
+Bash deny (main: deny)
+screen -dm sh -c 'true; KDEL'
+====
+Bash deny (main: deny)
+git rebase -i HEAD~1 --exec 'true; KDEL'
+====
+Bash deny (main: deny)
+git bisect run sh -c 'true; KDEL'
+====
+Bash deny (main: deny)
+npm exec -c 'true; KDEL'
+====
+Bash deny (main: deny)
+uv run sh -c 'true; KDEL'
+====
+Bash pass (main: pass)
+python3 -c 'import os; os.system("KDEL")'
+====
+Bash deny (main: deny)
+expect -c 'spawn sh -c "true; KDEL"'
+====
+Bash deny (main: deny)
+xterm -e 'true; KDEL'
+====
+Bash deny (main: deny)
+pwsh -c 'true; KDEL'
+====
+Bash deny (main: deny)
+dash -c 'true; KDEL'
+====
+Bash deny (main: deny)
+command sh -c 'true; KDEL'
+====
+Bash deny (main: deny)
+time sh -c 'true; KDEL'
+====
+Bash deny (main: deny)
+sudo -s 'true; KDEL'
+====
+Bash deny (main: deny)
+env sh -c 'true; KDEL'
+====
+Bash deny (main: deny)
+nice ksh -c 'true; KDEL'
+====
+Bash deny (main: deny)
+ksh -c 'GRP x TFSTATE; true'
+====
+Bash ask (main: ask)
+ksh -c 'true; TFAPPLY'
+====
+Bash deny (main: deny)
+zsh -c 'true; KDEL'
+====
+Bash deny (main: deny)
+nohup ksh -c 'true ALT KDEL'
+====
+Bash pass (main: pass)
+perl -e 'system("true"); system("KDEL")'
+====
+Bash pass (main: pass)
+awk 'BEGIN{system("true"); system("KDEL")}'
+====
+Bash deny (main: deny)
+echo 'true; KDEL' ALT ksh
+====
+Bash deny (main: deny)
+echo 'true; KDEL' ALT at now
+====
+Bash pass (main: pass)
+true; echo 'KDEL; x' ALT ksh
+====
+Bash deny (main: deny)
+busybox ash -c 'true && KDEL'
+====
+Bash deny (main: deny)
+ksh93 -c 'true || KDEL'
+====
+Bash ask (main: ask)
+sudo ksh -c 'true; TFAPPLY'
+====
+Bash deny (main: deny)
+echo "`true ; KDEL`"
+====
+Bash deny (main: deny)
+echo "`echo "` ; KDEL ; echo "`"
+====
+Bash deny (main: deny)
+echo "`echo '` ; KDEL ; echo '`"
+====
+Bash deny (main: deny)
+echo "`= ; KDEL ; echo {` x"
+====
+Bash deny (main: deny)
+echo "`true ; GRP x TFSTATE`"
+====
+Bash deny (main: deny)
+echo "`printf '"'` ; KDEL ; echo "`printf '"'`"
+====
+Bash deny (main: deny)
+GRP -rnE 'DB ALT PG' EXC .
+====
+Bash deny (main: deny)
+cd "$HOME" && GRP -rnE 'DB ALT PG' EXC .
+====
+Bash deny (main: deny)
+GRP -rnE 'DB ALT PG' EXC . 2>/dev/null ALT head -50
+====
+Bash deny (main: deny)
+GRP -rnE 'DB ALT PG' EXC . ALT GRP -v '#'
+====
+Bash deny (main: deny)
+GRP -rnE '^(DB ALT PG)_[A-Z_]+=' EXC .
+====
+Bash deny (main: deny)
+GRP -rnE '(DB ALT PG)_[A-Z]+$' EXC .
+====
+Bash deny (main: deny)
+GRP -rnE 'process\.env\.(DB ALT PG)' EXC --exclude-dir=node_modules .
+====
+Bash deny (main: deny)
+GRP -rnE 'getenv\("(DB ALT PG)' EXC .
+====
+Bash deny (main: deny)
+GRP -rnE '\$\{?(DB ALT PG)' EXC .
+====
+Bash deny (main: deny)
+GRP -rnE 'DB ALT PG' EXC --include='*.{yml,yaml,env}' .
+====
+Bash deny (main: deny)
+GRP -rn 'DB\ALT PG' EXC .
+====
+Bash deny (main: deny)
+GRP -rnE "DB ALT PG" EXC .
+====
+Bash deny (main: deny)
+GRP -rnE 'DB ALT PG' EXC . ; echo done #x
+====
+Bash deny (main: deny)
+GRP -rnE '<DB ALT PG>' EXC .
+====
+Bash deny (main: deny)
+GRP "$(echo "'")" x ; KDEL ; echo "$(echo "'")"
+====
+Bash deny (main: deny)
+GRP "$(echo "'")" x ; cat TFSTATE ; echo "$(echo "'")"
+====
+Bash deny (main: deny)
+GRP "`echo '`" x ; KDEL ; echo '`"
+====
+Bash deny (main: deny)
+GRP "`printf '"'`" x ; KDEL ; echo "`printf '"'`"
+====
+Bash deny (main: deny)
+GRP x . # it's
+KDEL # that's
+====
+Bash deny (main: deny)
+GRP x . <<EOF2
+it's
+EOF2
+KDEL
+echo 'x
+====
+Bash deny (main: deny)
+GRP $'\'' x ; KDEL ; echo \'
+====
+Bash deny (main: deny)
+GRP x <(echo "'") ; KDEL ; echo "'"
+====
+Bash deny (main: deny)
+GRP x >(cat) ; KDEL
+====
+Bash deny (main: deny)
+GRP 'a
+b' x ; KDEL
+====
+Bash ask (main: ask)
+GRP -E 'DBALTPG' x ; ssh host 'cd /x; TFAPPLY'
+====
+Bash deny (main: deny)
+rg --pre 'sh -c "true; KDEL"' x .
+====
+Bash deny (main: deny)
+rg --pre='sh -c "true; KDEL"' x .
+====
+Bash deny (main: deny)
+rg x --pre 'bash -c "cat TFSTATE; true"' .
+====
+Bash deny (main: deny)
+ack --pager 'sh -c "true; KDEL"' x
+====
+Bash deny (main: deny)
+ag --pager 'sh -c "true; KDEL"' x
+====
+Bash deny (main: deny)
+GRP x . --exclude='*.tfstate*' ; ssh host 'true; KDEL'
+====
+Bash deny (main: deny)
+rg --hostname-bin 'sh -c "true; KDEL"' x
+====
+PowerShell deny (main: deny)
+GRP `' x ; KDEL ; echo `'
+====
+PowerShell deny (main: deny)
+GRP `' x ; cat TFSTATE ; echo `'
+====
+Bash deny (main: deny)
+KNOCTX
+====
+Bash deny (main: deny)
+export A="x;y" KUBECONFIG=dev.yaml; KNOCTX
+====
+Bash deny (main: deny)
+export KUBECONFIG=dev.yaml; KNOCTX
+====
+Bash deny (main: pass)
+cat TFSTATE\&&&echo hi
+====
+Bash deny (main: pass)
+echo hi\&&&KDEL
+====
+Bash deny (main: deny)
+echo a|||KDEL
+====
+Bash deny (main: deny)
+echo a;;KDEL
+====
+Bash pass (main: pass)
+echo a&&&KDEL
+====
+Bash deny (main: deny)
+echo "a
+b" ; KDEL
+====
+Bash pass (main: pass)
+git commit -m "fix: x; y"
+====
+Bash pass (main: pass)
+echo "a | b"
+====
+Bash pass (main: pass)
+kubectl get pods -o jsonpath='{..metadata.name}' | GRP x
+====
+Bash deny (main: deny)
+find . -type f -exec GRP -l password {} \;
+====
+Bash pass (main: pass)
+find . -name '*.yaml' -exec cat {} \;
+====
+Bash deny (main: deny)
+find . -name 'TFGLOB' -exec cat {} \;
+====
+Bash pass (main: pass)
+sh -c "kubectl get pods | cat"
+====
+Bash deny (main: deny)
+sh -c "true; KDEL"
+====
+Bash pass (main: pass)
+watch "kubectl get pods | GRP x"
+====
+Bash deny (main: deny)
+xargs -I{} sh -c 'echo {}; KDEL'
+====
+Bash pass (main: pass)
+GRP -E 'DB|PG' .env
+====
+Bash deny (main: deny)
+GRP -rn "password\|secret" .
+====
+Bash deny (main: deny)
+cat TFSTATE | GRP x
+====
+Bash pass (main: pass)
+echo 'cat TFSTATE'
+====
+Bash pass (main: pass)
+git commit -m "docs: never cat TFSTATE; use outputs"
+====
+Bash pass (main: pass)
+git commit -m "docs: never KDEL; ask"
+====
+Bash pass (main: pass)
+echo "never KDEL; ask"
+====
+Bash pass (main: pass)
+kubectl get pods \
+  --context prod-admin | GRP x
+====
+Bash pass (main: pass)
+helm template x . | kubectl apply --dry-run=client -f -
+====
+Bash deny (main: deny)
+timeout 5 "sh" -c "true; KDEL"
+====
+Bash deny (main: deny)
+env 'sh' -c 'KDEL'
+====
+Bash pass (main: pass)
+"KDEL"
+====
+Bash deny (main: deny)
+KQUOTED
+====
+Bash pass (main: pass)
+echo "x; cd sub; cd sub; y"; ls
+====
+Bash pass (main: pass)
+cd "a;b" && ls
+====
+Bash pass (main: pass)
+ssh h "true; cd envs; cd envs; true"; ls
+====
+Bash deny (main: deny)
+tee "a;b" <<'EOF'
+KDEL
+EOF
+====
+Bash deny (main: deny)
+cat > "notes|x.md" <<'EOF'
+cat TFSTATE
+EOF
+====
+Bash pass (main: pass)
+cat > notes.md <<'EOF'
+KDEL
+EOF
+====
+Bash ask (main: ask)
+bash -c 'echo hi; terraform apply -auto-approve'
+====
+Bash deny (main: pass)
+sh -c "kubectl --context prod delete ns shop | cat"
+====
+Bash deny (main: deny)
+bash -c 'cd /x && kubectl delete ns shop'
+====
+Bash deny (main: deny)
+timeout 5 sh -c 'true; cat TFSTATE'
+====
+Bash deny (main: ask)
+watch -n1 'kubectl get pods; kubectl delete pod x --context prod'
+====
+Bash pass (main: pass)
+ssh host 'terraform apply -auto-approve; ls'
+====
+Bash deny (main: pass)
+xargs sh -c 'cat TFSTATE | head'
+====
+Bash deny (main: deny)
+env FOO=1 bash -c "ls || terraform destroy -auto-approve"
+====
+Bash deny (main: deny)
+python3 -c "import os; os.system('cat TFSTATE')"
+====
+Bash deny (main: pass)
+bash -c "kubectl get secret db -o jsonpath='{.data}' | base64 -d"
+====
+Bash ask (main: ask)
+eval 'ls; terraform apply -auto-approve'
+====
+Bash deny (main: deny)
+sudo sh -c 'echo x; helm uninstall web --kube-context prod'
+====
+Bash deny (main: pass)
+find . -name x -exec sh -c 'cat TFSTATE; true' \;
+====
+Bash pass (main: pass)
+git commit -m 'fix: run terraform apply; done'
+====
+Bash deny (main: deny)
+GRP -rnE 'DBALTPG' --exclude='*.tfstate*' .
+====
+Bash deny (main: deny)
+echo "a;b" && cat TFSTATE
+====
+Bash deny (main: deny)
+kubectl --context prod exec web -- sh -c 'cat /etc/x; rm -rf /data'
+====
+Bash deny (main: pass)
+bash -c 'echo "x" ; terraform state pull'
+====
+Bash ask (main: ask)
+sh -c 'ls' ; terraform apply -auto-approve
+====
+Bash deny (main: deny)
+nohup sh -c 'sleep 1; kubectl --context prod delete deploy web' &
+====
+Bash deny (main: deny)
+GRP -rnE 'DBALTPG' --exclude='*.TFSTATE*' .
