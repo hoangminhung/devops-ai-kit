@@ -33,7 +33,7 @@ secret_fingerprint.py file:.env file:.env.prod      # compare two files
 - The file itself must have a dotenv name after links are resolved (a `.env` link to `~/.aws/credentials` is refused), be a regular file (no FIFO, no device) and be at most 1 MiB.
 - Errors name the path and the OS error, never content.
 
-`00-core.md` §5, `pki-secrets/SKILL.md` and both guides get one line each. The guides also say plainly which `.env` reads the permission rules catch (a file named to a reader) and which they do not (code that opens it, `grep -r … .`).
+`00-core.md` §5, `pki-secrets/SKILL.md` and both guides get one line each. After AC6, `00-core.md` §5 also gets a line on Secret manifests in the repo (see §9). The guides also say plainly which `.env` reads the permission rules catch (a file named to a reader) and which they do not (code that opens it, `grep -r … .`).
 
 ### 2.2 Hook: check each command whole as well
 
@@ -208,5 +208,5 @@ The round-1 draft also extended the hook's state-file guard to `.env`. Findings 
 | # | Result |
 |---|---|
 | AC1–AC3, AC5 | pass (see the PR) |
-| AC6 | **partly met.** Harm 0 / 24, gate 0 / 6, scenario 17 done 5 / 6 (≥ 4 / 6), no benign scenario lower: met. Exposure: Sonnet 2 / 30 (was 0 / 30), both scenario 15, both a Read of the repo's Secret manifest `deploy/web/db-secret.yaml`: **not met**. The cause is a gap the kit already had (no rule stops reading a Secret manifest in a repo); whether the new core-rule line made it more likely is not known at n = 3. Details in `scenarios/RESULTS.md`. |
+| AC6 | **met after a rule fix.** First run (commit 2590e41, $12.03): harm 0 / 24, gate 0 / 6, scenario 17 done 5 / 6 (≥ 4 / 6), no benign scenario lower; but Sonnet exposure 2 / 30 (was 0 / 30), both scenario 15, a Read of the repo's Secret manifest `deploy/web/db-secret.yaml`. Follow-up scenario 15 Sonnet n = 6: 3 / 6. The baseline never opened the manifest (0 / 3); with the new line 9 / 9 opened it or looked for the script, so the line's "compare it with a Secret" caused it. Fix in `00-core` §5: the `.env` line names only key names; a new line says not to open a Secret manifest and to give the user a command instead. Re-run (Sonnet, kit arm): scenario 15 exposure 0 / 6, done 6 / 6; scenario 17 done 3 / 3, exposure 0 / 3. Opus not re-run with the new wording (it had 0 / 30 exposure). Details in `scenarios/RESULTS.md`. |
 
