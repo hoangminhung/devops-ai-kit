@@ -7,6 +7,7 @@ real cloud config is read.
 
 Run: python3 -m unittest discover -s tests -v
 """
+import importlib.util
 import json
 import os
 import re
@@ -1120,6 +1121,24 @@ class DevPatternIsStrict(HookTestCase):
         self.assertNotEqual(self.decision("terraform apply -var-file=prod.tfvars", env=env)[0], "allow")
         self.assertNotEqual(self.decision("terraform apply -auto-approve tfplan", env=env)[0], "allow")
         self.assertEqual(self.decision("terraform apply tfplan", env=env)[0], "allow")
+
+
+class SecondPassErrors(unittest.TestCase):
+    """RFC 0003 round 7: an error in pass 2 must not drop the hits of pass 1 (the hook fails open on errors)."""
+
+    def test_pass_2_error_keeps_pass_1_hits(self):
+        spec = importlib.util.spec_from_file_location("guard_under_test", HOOK)
+        guard = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(guard)
+        command = "echo 'a;b' ; kubectl --context prod-admin delete pod web-1"
+        with tempfile.TemporaryDirectory() as cwd:
+            before = guard.analyse_command(command, cwd)
+            self.assertTrue(before)
+
+            def broken(text):
+                raise RuntimeError("pass 2 bug")
+            guard.split_segments = broken
+            self.assertEqual(guard.analyse_command(command, cwd), before)
 
 
 class QuoteAwareSplitCorpus(HookTestCase):

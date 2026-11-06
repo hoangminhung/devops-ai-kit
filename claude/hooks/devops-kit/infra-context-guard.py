@@ -1489,9 +1489,14 @@ def analyse_command(command, cwd, depth=0):
     # Pass 2 adds the segments split outside quotes only, with their own export/cd state: `sh -c "kubectl … | cat"`
     # reaches the nested-shell check in one piece. It only adds hits (and Blocked), so the result is never weaker
     # than pass 1 alone (RFC 0003 §2.2).
-    whole = [seg.strip() for seg in split_segments(command) if seg.strip()]
-    if whole != plain:
-        hits.extend(analyse_segments(whole, cwd, depth, skip=set(plain)))
+    try:
+        whole = [seg.strip() for seg in split_segments(command) if seg.strip()]
+        if whole != plain:
+            hits.extend(analyse_segments(whole, cwd, depth, skip=set(plain)))
+    except Blocked:
+        raise
+    except Exception:  # noqa: BLE001 - the hook fails open on errors: pass 2 must never lose pass 1's hits
+        pass
     return hits
 
 

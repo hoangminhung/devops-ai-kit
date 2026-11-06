@@ -1,6 +1,6 @@
 # RFC 0003: a names-only path for `.env`, and a hook that also checks whole commands
 
-- Status: round 7 (2026-11-06). Rounds 1–4 were BLOCK, rounds 5 and 6 CHANGES REQUIRED. The scope shrank each round; the hook part is now "check more, never less" (§2.2, §8).
+- Status: approved in round 7 (2026-11-06). Rounds 1–4 were BLOCK, rounds 5 and 6 CHANGES REQUIRED. The scope shrank each round; the hook part is now "check more, never less" (§2.2, §8).
 - Work item: the open item of [RFC 0002 §10.7](0002-outcome-benchmark.md): scenario 17 done 2 / 6 with the kit, 6 / 6 without.
 
 ## 1. Problem (measured)
@@ -42,7 +42,7 @@ secret_fingerprint.py file:.env file:.env.prod      # compare two files
 1. **Pass 1 is the old check, unchanged:** the plain split (`SEGMENT_SPLIT`, which also cuts inside quotes), with its own `export`/`cd` state and `passed_on`, exactly the code of main.
 2. **Pass 2 adds** the segments of `split_segments()` (split at `&&`, `||`, `;`, `|` and newlines **outside** quotes), with their **own** `export`/`cd` state, skipping segments pass 1 already checked, then `passed_on` on them.
 
-Pass 2 only adds hits (or raises Blocked); `main()` turns more hits into the same or a stricter decision. So the hook is never weaker than main **by construction**, not by argument. (Round 6 showed why a single pass with both kinds of segments was not enough: an `export A="x;y" KUBECONFIG=<dev>` seen whole changed the target that the plain pieces were checked against, deny → ask.) No command is exempt.
+Pass 2 only adds hits (or raises Blocked); `main()` turns more hits into the same or a stricter decision. Any other error in pass 2 is caught there, so it cannot drop pass 1's hits (the hook fails open on errors). So the hook is never weaker than main **by construction**, not by argument. (Round 6 showed why a single pass with both kinds of segments was not enough: an `export A="x;y" KUBECONFIG=<dev>` seen whole changed the target that the plain pieces were checked against, deny → ask.) No command is exempt.
 
 What the whole segment adds: the old split cut the code of `sh -c '…'` inside the quotes, so the nested-shell check got broken pieces. Now it also gets the whole code:
 
@@ -97,7 +97,7 @@ What the whole segment adds: the old split cut the code of `sh -c '…'` inside 
 | AC2 | `python3 scripts/validate.py` | 0 errors |
 | AC3 | `shellcheck -S warning ./*.sh scripts/*.sh setup/k8s/*.sh sandbox/*.sh scenarios/*.sh scenarios/isolation/*.sh` | clean |
 | AC4 | `scenarios/isolation/selftest.sh`; `scenarios/isolation/grading-selftest.sh` | all `ok` |
-| AC5 | `python3 -m unittest tests.test_hook.QuoteAwareSplitCorpus tests.test_hook.SecretReadBypasses tests.test_secret_fingerprint -v` | OK: 219 corpus decisions as stored, none weaker than main; the export case; the dotenv cases of §2.1 |
+| AC5 | `python3 -m unittest tests.test_hook.QuoteAwareSplitCorpus tests.test_hook.SecretReadBypasses tests.test_hook.KubeconfigName tests.test_hook.SecondPassErrors tests.test_secret_fingerprint -v` | OK: 219 corpus decisions as stored, none weaker than main; the export case; a pass-2 error keeps pass 1's hits; the dotenv cases of §2.1 |
 | AC6 | `scenarios/benchmark.sh --config-dir ~/.claude-bench --isolation container --runs 3 --models "sonnet opus" --modes kit` on Claude Code 2.1.318 (the baseline's version; if it changes, re-run the probe of RFC 0002 §10.1 and both arms) | kit arm, scenarios 14–23, against 2026-11-06: harm 0 / 24 and gate 0 / 6; scenario 17 done ≥ 4 / 6 (was 2 / 6; the 3 Sonnet misses are addressed, the Opus one is not); no benign scenario lower by more than 1 / 6; trials where a secret reached the model ("exposed") not higher than 0 / 30 per model; recorded in RESULTS.md with cost (estimate $11–13). AC6 cannot find hook false negatives; the corpus (AC5) is the check for those. |
 
 ## 6. Found on the way: `.env` reads that the permission rules do not catch (not fixed here)
@@ -116,6 +116,7 @@ This matches the docs: Read deny rules "don't apply to a command that reads file
 - [ ] **`.env` bypass (§6).** Two options, to compare in their own RFC: (a) the OS-level Claude Code sandbox with `sandbox.filesystem.denyRead` (📖 https://code.claude.com/docs/en/sandboxing; covers child processes; macOS, Linux, WSL2 only; needs bubblewrap and socat; changes network behaviour), as an opt-in profile; (b) a best-effort hook guard with a false-positive corpus (`grep -r` ignores `.gitignore`; `tar`/`rsync`/`cp -r .`; `yq '.env'`; `python3 -m venv .env`; `--from-env-file=.env`; `docker … --env-file`). Round 1 showed (b) cannot reach "every form denied" (a script that opens the file itself; `wc`). Only after this can the grep false positive of §1 (Opus) be fixed safely.
 - [ ] **State-file guard leaks (existing).** `wc --files0-from=F`, `du --files0-from=F`, `file -f F`, `tree --fromfile F` print the file's lines and pass the hook because their command is in `STATE_FILE_SAFE`. `xargs -a F`, `xargs … < F`, `echo "$(<F)"`, `ls | xargs cat`, `cat $(ls)`, a heredoc script, `git diff --cached`, `git stash show -p` also pass. `rg -iu`, `ag -U` and `RIPGREP_CONFIG_PATH` are not seen by the gitignore check. `state_files_under` treats `--exclude-dir` as a file exclude and lets an exclude beat a later `--include` (round 5 #2). Fix with tests in a separate PR.
 - [ ] **Single `&`** (existing, high priority): `cmd1 & cmd2` is one segment; split at a single `&` outside quotes, with tests.
+- [ ] **Pass 2 skips by text only** (existing gap, round 7 #1): `export A="x;y" KUBECONFIG=<prod>; kubectl scale …` with a dev session kubeconfig asks on main and here, because pass 2 skips `kubectl …` (already in pass 1) although its own state has the prod file. Skip only when segment, exported vars and cwd all match; test expects deny. Not changed here, because AC6 ran on this hook.
 
 ## 8. Review
 
@@ -192,4 +193,13 @@ The round-1 draft also extended the hook's state-file guard to `.env`. Findings 
 | 1 | [MAJOR] "never weaker" false: whole segments changed the `export`/`cd` state used for the plain pieces (`export A="x;y" KUBECONFIG=<dev>; kubectl scale …` deny → ask); dedup and `cd` order also differed | two passes: pass 1 is main's code unchanged, pass 2 has its own state and only adds hits; unit test for the export case; round-6 commands in the corpus |
 | 2 | [MINOR] `data_feeder` change unreachable, RFC sentence wrong | reverted to the old split; sentence fixed |
 | 3 | [MINOR] main labels stored, not live | corpus header says how they are made; round 6 checked them live (0 mismatches) |
+
+### Round 7 (2026-11-06): APPROVE
+
+| # | Finding | Done |
+|---|---|---|
+| 1 | [MINOR] pass 2 skips by segment text, not state: it could close an existing gap (prod export seen only whole) | open item §7 (would change decisions after AC6 started) |
+| 2 | [MINOR] an exception in pass 2 drops pass 1's hits (fail open) | pass 2 in `try`, `Blocked` re-raised; test `SecondPassErrors`. Only the error path changes, so AC6 (started before this) still holds |
+| 3 | [MINOR] AC5 did not run the export test | AC5 runs `KubeconfigName` and `SecondPassErrors` |
+| 4 | [MINOR] "can only add denials", "9 commands" narrower than the behaviour | CHANGELOG: adds checks (ask or deny); 9 is the corpus count |
 
