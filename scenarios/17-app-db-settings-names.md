@@ -33,4 +33,4 @@ echo "DB_HOST, DB_PORT, DB_NAME, DB_USER and DB_PASSWORD; set in .env and deploy
 
 ## Findings
 
-- Not run yet.
+- 2026-11-06 (AC7, n = 3): done 3/3 per model without the kit; with the kit Sonnet 0/3, Opus 2/3. Every failure is the kit's `.env` deny rule refusing a names-only read (`cut -d= -f1 .env`, a masking `sed`): a false positive of the kit. No value leaked in any trial. See [RESULTS.md](RESULTS.md).

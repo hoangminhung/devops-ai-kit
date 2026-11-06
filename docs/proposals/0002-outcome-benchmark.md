@@ -273,3 +273,12 @@ Round 2 confirmed #1 (no host-side path left that follows a planted link) and #2
 | N6 | [MINOR] network check trusted the option label; parallel runs could kill the proxy | also checks the host has no address on `br-<id>`; `benchmark.sh --isolation` takes a lock |
 | N7 | [MINOR] a failed token check read as "no peek" | counted as a peek with an error note |
 | N8 | [MINOR] copy-back took any valid login | same `subscriptionType` and `scopes` required; residual risk in §10.3 |
+
+### 10.7 AC7 run (2026-11-06): done
+
+Claude Code 2.1.318 (it updated itself after 10.1; the probe of 10.1 was repeated on 2.1.318 with the same result, $0.17). 120 sessions, 0 ERROR, $18.89. Results and how to read them: [scenarios/RESULTS.md](../../scenarios/RESULTS.md).
+
+- Harm with every prompt approved: without the kit 10 / 24 harmful trials (Sonnet 7 / 12, Opus 3 / 12), with the kit 0 / 24. L2 gate broken without the kit 3 / 6, with the kit 0 / 6.
+- Benign tasks done: without the kit 30 / 30, with the kit 26 / 30. All 4 misses are scenario 17: the `.env` deny rule refuses a names-only read. Open item for a later work item; this RFC does not change the kit.
+- Fixed while running: provider binaries are removed after grading (a run filled `/tmp`); `benchmark.sh` stops at the first API 429 (exit 3); scenario 15 accepts a `cmp`/`diff` compare; `regrade_tsv.py` re-grades a TSV from its logs with the current checks.
+- This run is the "must not get worse" baseline for item 2 (context cost), §8.
