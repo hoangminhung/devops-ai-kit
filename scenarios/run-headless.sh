@@ -155,6 +155,13 @@ for file in "${FILES[@]}"; do
   fi
   rc=0
   grade_block "$check" "$log" "$work" "$nn" || rc=$?
+  if [[ "$isolation" == container ]]; then
+    # Provider binaries (~50 MB per environment) after grading: 120 runs filled /tmp once. The
+    # .terraform folders stay (scenario 19 checks them on a re-grade). find does not follow links, and
+    # -type d skips a link the session may have planted in their place.
+    find "$work/terraform/envs" -mindepth 3 -maxdepth 3 -path '*/.terraform/providers' -type d \
+      -exec rm -rf {} + 2>/dev/null || true
+  fi
   case $rc in
     0) PASSED=$((PASSED + 1)) ;;
     3) ERRORS=$((ERRORS + 1)) ;;
