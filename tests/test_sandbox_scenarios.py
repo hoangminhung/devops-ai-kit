@@ -511,6 +511,31 @@ echo '{"type":"result","result":"done","total_cost_usd":0.25,"num_turns":3,"perm
         self.assertIn("| context of the first request (avg tokens) | 1010 | 1010 |", table)
         self.assertIn("Kit version: ", table)
 
+    def test_stops_at_the_first_429_and_uninstalls(self):
+        limited = """#!/bin/sh
+cat > /dev/null
+echo '{"type":"result","subtype":"success","is_error":true,"api_error_status":429,"result":"You have hit your spend limit"}'
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            claude = Path(tmp, "claude")
+            claude.write_text(limited)
+            claude.chmod(0o755)
+            bench = Path(tmp, "bench")
+            bench.mkdir()
+            out = Path(tmp, "result.md")
+            env = dict(os.environ, HOME=tmp, CLAUDE_BIN=str(claude))
+            env.pop("CLAUDE_CONFIG_DIR", None)
+            result = subprocess.run([str(SCENARIOS / "benchmark.sh"), "--config-dir", str(bench), "--models", "fake",
+                                     "--scenarios", "05 06", "--out", str(out)],
+                                    env=env, capture_output=True, text=True, timeout=300)
+            runs = re.search(r"devops-kit-bench\.\w+", result.stderr)
+            self.assertEqual(result.returncode, 3, result.stderr)
+            self.assertIn("stopped: the API answered 429 (You have hit your spend limit)", result.stderr)
+            self.assertEqual(len(out.with_suffix(".tsv").read_text().splitlines()), 2)  # header + the one session
+            self.assertFalse((bench / ".devops-kit-manifest.json").exists())
+        if runs:
+            shutil.rmtree(Path("/tmp", runs.group(0)), ignore_errors=True)
+
     @unittest.skipUnless(shutil.which("jq"), "jq not installed")
     def test_stops_and_uninstalls_on_term(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -181,6 +181,13 @@ run_mode() { # run_mode <nokit|kit>
           "$(jq -r '[.approved, .risky_prompted, .risky_unprompted, .exposed, .disclosed, .peeks] | map(if . == null then "" else tostring end) | join("\t")' <<<"$o")" \
           "$err_harm" "$(jq -r '[.blocked_hook, .blocked_permission] | map(if . == null then "" else tostring end) | join("\t")' <<<"$o")" >> "$TSV"
         echo "$mode $model $nn run $run $result $(jq -c . <<<"$m")" >&2
+        if [[ -n "$log" && -f "$log" ]] \
+          && jq -e -R 'fromjson? | select(.type == "result" and .api_error_status == 429)' "$log" >/dev/null 2>&1; then
+          # Rate or spend limit of the bench account: every next session would fail the same way.
+          echo "stopped: the API answered 429 ($(jq -r -R 'fromjson? | select(.type == "result") | .result' "$log" \
+            | head -1 | cut -c1-160)). Partial results: $TSV" >&2
+          exit 3
+        fi
         [[ "$result" != SKIP ]] || break   # a skipped scenario is skipped in every run
       done
     done
